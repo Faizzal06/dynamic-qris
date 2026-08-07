@@ -1,0 +1,23 @@
+# Dependencies
+node_modules/
+test/
+
+PRD.md
+
+# Database
+data/
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+
+# Env
+.env
+
+# Logs
+*.log
+npm-debug.log*
+
+# OS
+.DS_Store
+Thumbs.db
