@@ -1,12 +1,12 @@
 'use strict';
 
 const express = require('express');
-const { requireBearer } = require('../middleware/auth');
+const { requirePayhookToken } = require('../middleware/auth');
 const logger = require('../utils/logger');
 
-function createInternalRouter({ config, transactionService }) {
+function createInternalRouter({ transactionService, db }) {
   const router = express.Router();
-  router.use(requireBearer(config.payhookToken));
+  router.use(requirePayhookToken(db));
 
   // POST /internal/webhook/payhook — selalu balas 200 agar PayHook tidak retry
   router.post('/webhook/payhook', (req, res) => {
@@ -30,7 +30,7 @@ function createInternalRouter({ config, transactionService }) {
       return res.json({ status: 'ok', processed: false });
     }
 
-    const result = transactionService.handlePayhookNotification({
+    const result = transactionService.handlePayhookNotification(req.merchant, {
       event_id: String(event_id),
       event_type,
       amount: numericAmount,

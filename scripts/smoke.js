@@ -41,11 +41,6 @@ async function main() {
   const config = {
     port: 0,
     baseUrl: 'http://gateway.test',
-    merchantApiKey: 'sk_test',
-    merchantQrisStatic: QRIS_STATIC,
-    merchantWebhookUrl: 'http://127.0.0.1:1/webhook', // port 1 = selalu gagal (simulasi)
-    merchantWebhookSecret: 'whsec_test',
-    payhookToken: 'ph_test',
     dbPath: ':memory:',
     qrisConvertUrl: converter.url,
     qrisConvertTimeoutMs: 2000,
@@ -55,10 +50,29 @@ async function main() {
     expirySweeperIntervalMs: 60000,
     webhookTimeoutMs: 1000,
     webhookMaxAttempts: 5,
+    adminUsername: 'admin',
+    adminPassword: 'admin123',
+    sessionTtlMs: 3600_000,
+    cookieSecure: false,
+    loginRateLimitMax: 5,
+    loginRateLimitWindowMs: 60_000,
   };
 
   const db = openDatabase(config.dbPath);
-  const { app } = createApp({ db, config });
+  const { app, merchantService, userService } = createApp({ db, config });
+
+  // Seed admin + merchant untuk smoke test
+  await userService.createUser({ role: 'admin', username: 'admin', password: 'admin123' });
+
+  const merchant = merchantService.createMerchant({
+    name: 'Smoke Merchant',
+    qris_static: QRIS_STATIC,
+    webhook_url: 'http://127.0.0.1:1/webhook', // port 1 = selalu gagal (simulasi)
+    webhook_secret: 'whsec_test',
+  });
+  const apiKey = merchant.api_key;
+  const payhookToken = merchant.payhook_token;
+
   const server = await new Promise((resolve) => {
     const s = app.listen(0, '127.0.0.1', () => resolve(s));
   });
@@ -83,7 +97,7 @@ async function main() {
   await check('create transaksi → 201', async () => {
     const res = await fetch(`${base}/v1/transactions`, {
       method: 'POST',
-      headers: { Authorization: 'Bearer sk_test', 'Content-Type': 'application/json' },
+      headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({ ref_id: 'SMOKE-1', amount: 10000 }),
     });
     const json = await res.json();
@@ -103,7 +117,7 @@ async function main() {
   await check('qr.png publik → image/png', async () => {
     const create = await fetch(`${base}/v1/transactions`, {
       method: 'POST',
-      headers: { Authorization: 'Bearer sk_test', 'Content-Type': 'application/json' },
+      headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({ ref_id: 'SMOKE-2', amount: 20000 }),
     });
     const txn = await create.json();
@@ -115,14 +129,14 @@ async function main() {
   await check('payhook → paid + webhook retry terjadwal', async () => {
     const create = await fetch(`${base}/v1/transactions`, {
       method: 'POST',
-      headers: { Authorization: 'Bearer sk_test', 'Content-Type': 'application/json' },
+      headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({ ref_id: 'SMOKE-3', amount: 30000 }),
     });
     const txn = await create.json();
 
     const payhook = await fetch(`${base}/internal/webhook/payhook`, {
       method: 'POST',
-      headers: { Authorization: 'Bearer ph_test', 'Content-Type': 'application/json' },
+      headers: { Authorization: `Bearer ${payhookToken}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({
         event_id: `evt_${Date.now()}`,
         event_type: 'payment.incoming',
@@ -143,6 +157,19 @@ async function main() {
     if (row.webhook_attempts < 1) throw new Error('webhook tidak pernah dicoba');
     if (row.webhook_status !== 'pending') throw new Error(`webhook_status=${row.webhook_status}`);
     if (!row.webhook_next_retry_at) throw new Error('tidak ada jadwal retry');
+  });
+
+  await check('login admin → session cookie', async () => {
+    const res = await fetch(`${base}/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username: 'admin', password: 'admin123' }),
+    });
+    if (res.status !== 200) throw new Error(`status ${res.status}`);
+    const cookie = (res.headers.get('set-cookie') || '').split(';')[0];
+    const me = await fetch(`${base}/auth/me`, { headers: { Cookie: cookie } });
+    const meJson = await me.json();
+    if (!meJson.user || meJson.user.role !== 'admin') throw new Error(`role tidak sesuai: ${JSON.stringify(meJson)}`);
   });
 
   server.close();

@@ -53,22 +53,26 @@ function createTransactionService(db, config, uniqueAmount, qrisConverter, webho
     return { ...row };
   }
 
-  async function createTransaction(input) {
+  /** Buat transaksi untuk merchant tertentu. */
+  async function createTransaction(merchant, input) {
     const valid = validateCreateInput(input);
 
-    // Idempotensi ref_id: kembalikan transaksi yang sudah ada
-    const existing = db.prepare('SELECT * FROM transactions WHERE ref_id = ? LIMIT 1').get(valid.ref_id);
+    // Idempotensi (merchant_id, ref_id): kembalikan transaksi yang sudah ada
+    const existing = db
+      .prepare('SELECT * FROM transactions WHERE merchant_id = ? AND ref_id = ? LIMIT 1')
+      .get(merchant.id, valid.ref_id);
     if (existing) {
       return { transaction: rowToObject(existing), created: false };
     }
 
-    const actualAmount = uniqueAmount.generate(valid.amount);
-    const { qrString, qrBase64 } = await qrisConverter.convert(config.merchantQrisStatic, actualAmount);
+    const actualAmount = uniqueAmount.generate(merchant.id, valid.amount);
+    const { qrString, qrBase64 } = await qrisConverter.convert(merchant.qris_static, actualAmount);
 
     const now = new Date();
     const expiresAt = new Date(now.getTime() + valid.expiry_minutes * 60_000);
     const txn = {
       id: generateId('txn'),
+      merchant_id: merchant.id,
       ref_id: valid.ref_id,
       requested_amount: valid.amount,
       actual_amount: actualAmount,
@@ -87,24 +91,27 @@ function createTransactionService(db, config, uniqueAmount, qrisConverter, webho
       webhook_attempts: 0,
       webhook_next_retry_at: null,
       webhook_last_error: null,
+      refunded_at: null,
     };
 
     try {
       db.prepare(
         `INSERT INTO transactions (
-          id, ref_id, requested_amount, actual_amount, qr_string, qr_base64, status,
+          id, merchant_id, ref_id, requested_amount, actual_amount, qr_string, qr_base64, status,
           callback_url, metadata, paid_at, paid_source, paid_reference, payhook_event_id,
-          expires_at, created_at, webhook_status, webhook_attempts, webhook_next_retry_at, webhook_last_error
+          expires_at, created_at, webhook_status, webhook_attempts, webhook_next_retry_at, webhook_last_error, refunded_at
         ) VALUES (
-          @id, @ref_id, @requested_amount, @actual_amount, @qr_string, @qr_base64, @status,
+          @id, @merchant_id, @ref_id, @requested_amount, @actual_amount, @qr_string, @qr_base64, @status,
           @callback_url, @metadata, @paid_at, @paid_source, @paid_reference, @payhook_event_id,
-          @expires_at, @created_at, @webhook_status, @webhook_attempts, @webhook_next_retry_at, @webhook_last_error
+          @expires_at, @created_at, @webhook_status, @webhook_attempts, @webhook_next_retry_at, @webhook_last_error, @refunded_at
         )`
       ).run(txn);
     } catch (err) {
       // Race condition ref_id: request lain sudah insert lebih dulu → kembalikan transaksi yang ada
       if (String(err.code || '').startsWith('SQLITE_CONSTRAINT')) {
-        const concurrent = db.prepare('SELECT * FROM transactions WHERE ref_id = ? LIMIT 1').get(valid.ref_id);
+        const concurrent = db
+          .prepare('SELECT * FROM transactions WHERE merchant_id = ? AND ref_id = ? LIMIT 1')
+          .get(merchant.id, valid.ref_id);
         if (concurrent) {
           return { transaction: rowToObject(concurrent), created: false };
         }
@@ -112,12 +119,13 @@ function createTransactionService(db, config, uniqueAmount, qrisConverter, webho
       throw err;
     }
 
-    logger.info(`[txn] dibuat ${txn.id} ref_id=${txn.ref_id} actual=${actualAmount}`);
+    logger.info(`[txn] dibuat ${txn.id} merchant=${merchant.id} ref_id=${txn.ref_id} actual=${actualAmount}`);
     return { transaction: txn, created: true };
   }
 
-  function getTransaction(id) {
-    const txn = db.prepare('SELECT * FROM transactions WHERE id = ?').get(id);
+  /** Ambil transaksi milik merchant tertentu (scoped). */
+  function getTransaction(merchant, id) {
+    const txn = db.prepare('SELECT * FROM transactions WHERE id = ? AND merchant_id = ?').get(id, merchant.id);
     if (!txn) return null;
 
     // Lazy expire: jika pending dan sudah lewat expires_at
@@ -128,12 +136,14 @@ function createTransactionService(db, config, uniqueAmount, qrisConverter, webho
     return rowToObject(txn);
   }
 
+  /** QR publik (tanpa auth). */
   function getQrBase64(id) {
     const row = db.prepare('SELECT qr_base64 FROM transactions WHERE id = ?').get(id);
     return row ? row.qr_base64 : null;
   }
 
-  function handlePayhookNotification({ event_id, event_type, amount, source, reference }) {
+  /** Proses notifikasi PayHook untuk merchant tertentu (dari payhook_token). */
+  function handlePayhookNotification(merchant, { event_id, event_type, amount, source, reference }) {
     // Idempotensi event_id (cegah double process)
     const dupTxn = db.prepare('SELECT 1 FROM transactions WHERE payhook_event_id = ? LIMIT 1').get(event_id);
     const dupOrphan = db.prepare('SELECT 1 FROM orphan_payments WHERE event_id = ? LIMIT 1').get(event_id);
@@ -145,21 +155,21 @@ function createTransactionService(db, config, uniqueAmount, qrisConverter, webho
     const now = new Date();
     const nowIso = now.toISOString();
 
-    // Cari transaksi pending dengan nominal unik yang belum expired
+    // Cari transaksi pending merchant ini dengan nominal unik yang belum expired
     const pending = db
       .prepare(
         `SELECT * FROM transactions
-         WHERE status = 'pending' AND actual_amount = ? AND expires_at > ?
+         WHERE merchant_id = ? AND status = 'pending' AND actual_amount = ? AND expires_at > ?
          ORDER BY created_at ASC LIMIT 1`
       )
-      .get(amount, nowIso);
+      .get(merchant.id, amount, nowIso);
 
     if (!pending) {
       db.prepare(
-        `INSERT INTO orphan_payments (event_id, amount, source, reference, received_at, note)
-         VALUES (?, ?, ?, ?, ?, ?)`
-      ).run(event_id, amount, source || null, reference || null, nowIso, 'tidak ada transaksi pending yang cocok');
-      logger.warn(`[payhook] orphan payment event=${event_id} amount=${amount}`);
+        `INSERT INTO orphan_payments (merchant_id, event_id, amount, source, reference, received_at, note)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`
+      ).run(merchant.id, event_id, amount, source || null, reference || null, nowIso, 'tidak ada transaksi pending yang cocok');
+      logger.warn(`[payhook] orphan payment merchant=${merchant.id} event=${event_id} amount=${amount}`);
       return { matched: false, reason: 'no_match' };
     }
 
@@ -169,7 +179,14 @@ function createTransactionService(db, config, uniqueAmount, qrisConverter, webho
        WHERE id = ?`
     ).run(nowIso, source || null, reference || null, event_id, pending.id);
 
-    const paidTxn = { ...pending, status: 'paid', paid_at: nowIso, paid_source: source || null, paid_reference: reference || null, payhook_event_id: event_id };
+    const paidTxn = {
+      ...pending,
+      status: 'paid',
+      paid_at: nowIso,
+      paid_source: source || null,
+      paid_reference: reference || null,
+      payhook_event_id: event_id,
+    };
     logger.info(`[payhook] transaksi ${pending.id} dibayar amount=${amount} source=${source || '-'}`);
 
     // Kirim webhook ke merchant secara async (retry di-handle job)
@@ -178,7 +195,116 @@ function createTransactionService(db, config, uniqueAmount, qrisConverter, webho
     return { matched: true, transaction: paidTxn };
   }
 
-  return { createTransaction, getTransaction, getQrBase64, handlePayhookNotification };
+  // ===== Query untuk dashboard (admin) & dashboard merchant =====
+
+  function listTransactions({ merchantId, status, page = 1, limit = 25 }) {
+    const where = [];
+    const params = [];
+    if (merchantId) {
+      where.push('merchant_id = ?');
+      params.push(merchantId);
+    }
+    if (status) {
+      where.push('status = ?');
+      params.push(status);
+    }
+    const whereSql = where.length > 0 ? `WHERE ${where.join(' AND ')}` : '';
+
+    const total = db.prepare(`SELECT COUNT(*) AS c FROM transactions ${whereSql}`).get(...params).c;
+    const safeLimit = Math.min(Math.max(Number(limit) || 25, 1), 100);
+    const safePage = Math.max(Number(page) || 1, 1);
+    const offset = (safePage - 1) * safeLimit;
+
+    const rows = db
+      .prepare(`SELECT * FROM transactions ${whereSql} ORDER BY created_at DESC LIMIT ? OFFSET ?`)
+      .all(...params, safeLimit, offset);
+
+    return {
+      data: rows.map(rowToObject),
+      total,
+      page: safePage,
+      limit: safeLimit,
+      total_pages: Math.max(Math.ceil(total / safeLimit), 1),
+    };
+  }
+
+  function listOrphanPayments({ merchantId, page = 1, limit = 25 }) {
+    const where = [];
+    const params = [];
+    if (merchantId) {
+      where.push('merchant_id = ?');
+      params.push(merchantId);
+    }
+    const whereSql = where.length > 0 ? `WHERE ${where.join(' AND ')}` : '';
+
+    const total = db.prepare(`SELECT COUNT(*) AS c FROM orphan_payments ${whereSql}`).get(...params).c;
+    const safeLimit = Math.min(Math.max(Number(limit) || 25, 1), 100);
+    const safePage = Math.max(Number(page) || 1, 1);
+    const offset = (safePage - 1) * safeLimit;
+
+    const rows = db
+      .prepare(`SELECT * FROM orphan_payments ${whereSql} ORDER BY received_at DESC LIMIT ? OFFSET ?`)
+      .all(...params, safeLimit, offset);
+
+    return {
+      data: rows,
+      total,
+      page: safePage,
+      limit: safeLimit,
+      total_pages: Math.max(Math.ceil(total / safeLimit), 1),
+    };
+  }
+
+  // ===== Aksi admin =====
+
+  function forceExpire(id) {
+    const txn = db.prepare('SELECT * FROM transactions WHERE id = ?').get(id);
+    if (!txn) return null;
+    if (txn.status !== 'pending') return { transaction: txn, changed: false };
+    db.prepare(`UPDATE transactions SET status = 'expired' WHERE id = ?`).run(id);
+    logger.info(`[admin] transaksi ${id} di-expire manual`);
+    return { transaction: { ...txn, status: 'expired' }, changed: true };
+  }
+
+  function refund(id) {
+    const txn = db.prepare('SELECT * FROM transactions WHERE id = ?').get(id);
+    if (!txn) return null;
+    if (txn.status !== 'paid') return { transaction: txn, changed: false };
+
+    const refundedAt = new Date().toISOString();
+    db.prepare(`UPDATE transactions SET status = 'refunded', refunded_at = ? WHERE id = ?`).run(refundedAt, id);
+    const updated = { ...txn, status: 'refunded', refunded_at: refundedAt };
+    logger.info(`[admin] transaksi ${id} di-refund`);
+
+    // Notifikasi merchant
+    webhookSender.send(updated, { event: 'transaction.refunded' }).catch((err) =>
+      logger.error(`[webhook] error refund tidak terduga: ${err.message}`)
+    );
+
+    return { transaction: updated, changed: true };
+  }
+
+  function resendWebhook(id) {
+    const txn = db.prepare('SELECT * FROM transactions WHERE id = ?').get(id);
+    if (!txn || txn.status !== 'paid') return null;
+    logger.info(`[admin] kirim ulang webhook untuk ${id}`);
+    webhookSender.send(txn, { event: 'transaction.paid' }).catch((err) =>
+      logger.error(`[webhook] error resend tidak terduga: ${err.message}`)
+    );
+    return txn;
+  }
+
+  return {
+    createTransaction,
+    getTransaction,
+    getQrBase64,
+    handlePayhookNotification,
+    listTransactions,
+    listOrphanPayments,
+    forceExpire,
+    refund,
+    resendWebhook,
+  };
 }
 
 module.exports = { createTransactionService };

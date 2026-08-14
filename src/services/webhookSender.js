@@ -1,6 +1,5 @@
 'use strict';
 
-const { ApiError } = require('../utils/errors');
 const { hmacSha256Hex } = require('../utils/crypto');
 const { safeParseJson } = require('../utils/serializers');
 const logger = require('../utils/logger');
@@ -8,20 +7,35 @@ const logger = require('../utils/logger');
 const BACKOFF_MINUTES = [1, 5, 30, 120]; // 1m, 5m, 30m, 2j
 
 function createWebhookSender(db, config) {
-  function buildPayload(txn) {
-    return {
-      event: 'transaction.paid',
+  function getMerchant(merchantId) {
+    return db.prepare('SELECT * FROM merchants WHERE id = ?').get(merchantId);
+  }
+
+  function buildPayload(txn, event) {
+    const base = {
       id: txn.id,
       ref_id: txn.ref_id,
-      status: 'paid',
       actual_amount: txn.actual_amount,
-      paid_at: txn.paid_at,
       metadata: safeParseJson(txn.metadata),
+    };
+    if (event === 'transaction.refunded') {
+      return {
+        event: 'transaction.refunded',
+        ...base,
+        status: 'refunded',
+        refunded_at: txn.refunded_at,
+      };
+    }
+    return {
+      event: 'transaction.paid',
+      ...base,
+      status: 'paid',
+      paid_at: txn.paid_at,
     };
   }
 
-  function sign(rawBody) {
-    return `sha256=${hmacSha256Hex(rawBody, config.merchantWebhookSecret)}`;
+  function sign(rawBody, secret) {
+    return `sha256=${hmacSha256Hex(rawBody, secret)}`;
   }
 
   function updateAfterAttempt(txn, attempts, ok, errorMsg) {
@@ -51,9 +65,22 @@ function createWebhookSender(db, config) {
     return { ok: false, retryAt: nextRetryAt };
   }
 
-  async function send(txn) {
-    const callbackUrl = txn.callback_url || config.merchantWebhookUrl;
-    const payload = buildPayload(txn);
+  /**
+   * Kirim webhook ke merchant.
+   * @param {object} txn transaksi (harus punya merchant_id)
+   * @param {{event?: 'transaction.paid'|'transaction.refunded'}} [opts]
+   */
+  async function send(txn, opts = {}) {
+    const merchant = getMerchant(txn.merchant_id);
+    if (!merchant) {
+      const errorMsg = 'merchant not found';
+      logger.error(`[webhook] merchant ${txn.merchant_id} tidak ditemukan untuk txn ${txn.id}`);
+      return updateAfterAttempt(txn, txn.webhook_attempts + 1, false, errorMsg);
+    }
+
+    const event = opts.event || 'transaction.paid';
+    const callbackUrl = txn.callback_url || merchant.webhook_url;
+    const payload = buildPayload(txn, event);
     const rawBody = JSON.stringify(payload);
     const attempts = txn.webhook_attempts + 1;
 
@@ -63,27 +90,27 @@ function createWebhookSender(db, config) {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'X-Signature': sign(rawBody),
-          'X-Event': 'transaction.paid',
+          'X-Signature': sign(rawBody, merchant.webhook_secret),
+          'X-Event': event,
         },
         body: rawBody,
         signal: AbortSignal.timeout(config.webhookTimeoutMs),
       });
     } catch (err) {
       const errorMsg = err.name === 'TimeoutError' || err.name === 'AbortError' ? 'timeout' : err.message;
-      logger.warn(`[webhook] attempt ${attempts} gagal untuk ${txn.id}: ${errorMsg}`);
+      logger.warn(`[webhook] attempt ${attempts} gagal untuk ${txn.id} (${event}): ${errorMsg}`);
       return updateAfterAttempt(txn, attempts, false, errorMsg);
     }
 
     if (res.ok) {
-      logger.info(`[webhook] terkirim untuk ${txn.id} (attempt ${attempts})`);
+      logger.info(`[webhook] terkirim untuk ${txn.id} (${event}, attempt ${attempts})`);
       // drain body agar koneksi bisa dipakai ulang
       await res.text().catch(() => {});
       return updateAfterAttempt(txn, attempts, true, null);
     }
 
     const errorMsg = `HTTP ${res.status}`;
-    logger.warn(`[webhook] attempt ${attempts} gagal untuk ${txn.id}: ${errorMsg}`);
+    logger.warn(`[webhook] attempt ${attempts} gagal untuk ${txn.id} (${event}): ${errorMsg}`);
     await res.text().catch(() => {});
     return updateAfterAttempt(txn, attempts, false, errorMsg);
   }

@@ -1,7 +1,7 @@
 {
   "name": "dyqris",
   "version": "1.0.0",
-  "description": "Mini QRIS Payment Gateway (Single Merchant Edition) - converts static QRIS to dynamic QRIS with unique amount validation",
+  "description": "Multi-tenant Mini QRIS Payment Gateway - converts static QRIS to dynamic QRIS with unique amount validation, admin dashboard, and per-merchant webhooks",
   "main": "src/server.js",
   "scripts": {
     "start": "node src/server.js",
@@ -9,7 +9,7 @@
     "test": "node --test \"test/**/*.test.js\""
   },
   "engines": {
-    "node": ">=18"
+    "node": ">=22"
   },
   "license": "MIT",
   "dependencies": {
