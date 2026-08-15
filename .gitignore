@@ -3,6 +3,7 @@ node_modules/
 test/
 
 PRD.md
+opencode.json
 
 # Database
 data/

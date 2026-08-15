@@ -30,7 +30,7 @@ function createInternalRouter({ transactionService, db }) {
       return res.json({ status: 'ok', processed: false });
     }
 
-    const result = transactionService.handlePayhookNotification(req.merchant, {
+    const result = transactionService.handlePayhookNotification(req.payhookApp, {
       event_id: String(event_id),
       event_type,
       amount: numericAmount,

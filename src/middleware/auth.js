@@ -23,19 +23,21 @@ function requireApiKey(db) {
   };
 }
 
-/** Auth untuk Internal API (/internal). Token = payhook_token merchant. */
+/**
+ * Auth untuk Internal API (/internal). Token = token aplikasi PayHook.
+ * Satu aplikasi PayHook bisa dipakai banyak merchant (mis. pool admin),
+ * jadi hanya menempelkan aplikasi ke req — matching transaksi dilakukan di service.
+ */
 function requirePayhookToken(db) {
   return (req, res, next) => {
     const token = extractBearer(req);
-    const merchant = token
-      ? db.prepare('SELECT * FROM merchants WHERE payhook_token = ?').get(token)
-      : null;
-    if (!merchant || merchant.status !== 'active') {
+    const app = token ? db.prepare('SELECT * FROM payhook_apps WHERE token = ?').get(token) : null;
+    if (!app || app.status !== 'active') {
       return res.status(401).json({
         error: { code: 'unauthorized', message: 'PayHook token tidak valid' },
       });
     }
-    req.merchant = merchant;
+    req.payhookApp = app;
     return next();
   };
 }

@@ -19,14 +19,14 @@ function createAuthRouter({ db, config, userService, rateLimiter }) {
       const ip = req.ip || req.socket.remoteAddress || 'unknown';
       if (!rateLimiter.allow(`${ip}:${username.trim()}`)) {
         return res.status(429).json({
-          error: { code: 'too_many_attempts', message: 'Terlalu banyak percobaan login, coba lagi nanti' },
+          error: { code: 'too_many_attempts', message: 'Terlalu banyak percobaan login. Tunggu sebentar, lalu coba lagi.' },
         });
       }
 
       const user = await userService.authenticateUser(username.trim(), password);
       if (!user) {
         logger.warn(`[auth] login gagal untuk ${username.trim()} dari ${ip}`);
-        return res.status(401).json({ error: { code: 'invalid_credentials', message: 'Username atau password salah' } });
+        return res.status(401).json({ error: { code: 'invalid_credentials', message: 'Username atau password salah. Cek kembali dan coba lagi.' } });
       }
 
       const session = sessionService.createSession(db, user.id, config.sessionTtlMs);

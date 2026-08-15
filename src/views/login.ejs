@@ -1,0 +1,23 @@
+<%- include('partials/head', { title: 'Login — Gateway QRIS' }) %>
+<main class="login-body">
+  <div class="login-card">
+    <div class="login-logo"><i class="fa-solid fa-qrcode"></i></div>
+    <h1 class="login-title">Gateway QRIS</h1>
+    <p class="muted login-sub">Masuk ke dashboard gateway pembayaran QRIS</p>
+    <% if (error) { %>
+      <div class="alert alert-danger"><%= error %></div>
+    <% } %>
+    <form id="login-form" novalidate>
+      <label for="username">Username</label>
+      <input id="username" name="username" autocomplete="username" required autofocus />
+      <label for="password">Password</label>
+      <input id="password" name="password" type="password" autocomplete="current-password" required />
+      <div id="login-error" class="alert alert-danger hidden"></div>
+      <button id="login-btn" type="submit" class="btn btn-primary btn-block">Masuk</button>
+    </form>
+    <a class="btn btn-ghost btn-block" href="/docs" style="text-align: center;"><i class="fa-solid fa-book"></i> Baca Dokumentasi API</a>
+  </div>
+</main>
+<script src="/admin/login.js"></script>
+</body>
+</html>

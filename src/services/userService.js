@@ -20,13 +20,13 @@ function createUserService(db) {
       throw new ApiError(400, 'invalid_user', 'username wajib diisi');
     }
     if (typeof password !== 'string' || password.length < 8) {
-      throw new ApiError(400, 'invalid_user', 'password minimal 8 karakter');
+      throw new ApiError(400, 'invalid_user', 'Password minimal 8 karakter.');
     }
     if (!['admin', 'merchant'].includes(role)) {
       throw new ApiError(400, 'invalid_user', 'role harus admin atau merchant');
     }
     if (getUserByUsername(username)) {
-      throw new ApiError(409, 'username_exists', 'username sudah dipakai');
+      throw new ApiError(409, 'username_exists', 'Username sudah dipakai. Pilih username lain.');
     }
 
     const now = new Date().toISOString();
@@ -64,7 +64,7 @@ function createUserService(db) {
     const user = getUserByMerchant(merchantId, 'merchant');
     if (!user) return null;
     if (typeof newPassword !== 'string' || newPassword.length < 8) {
-      throw new ApiError(400, 'invalid_user', 'password minimal 8 karakter');
+      throw new ApiError(400, 'invalid_user', 'Password minimal 8 karakter.');
     }
     const passwordHash = await hashPassword(newPassword);
     db.prepare('UPDATE users SET password_hash = ?, updated_at = ? WHERE id = ?').run(
@@ -79,7 +79,7 @@ function createUserService(db) {
   /** Ganti password user saat ini (self-service). */
   async function changePassword(userId, newPassword) {
     if (typeof newPassword !== 'string' || newPassword.length < 8) {
-      throw new ApiError(400, 'invalid_user', 'password minimal 8 karakter');
+      throw new ApiError(400, 'invalid_user', 'Password minimal 8 karakter.');
     }
     const passwordHash = await hashPassword(newPassword);
     db.prepare('UPDATE users SET password_hash = ?, updated_at = ? WHERE id = ?').run(

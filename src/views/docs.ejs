@@ -1,0 +1,265 @@
+<%- include('partials/head', { title: 'Dokumentasi API — Gateway QRIS' }) %>
+<header class="topbar">
+  <div class="topbar-left">
+    <span class="brand">🪙 Gateway QRIS</span>
+    <a class="nav-link" href="/docs">Dokumentasi API</a>
+  </div>
+  <div class="topbar-right">
+    <button id="theme-toggle" class="icon-btn" type="button" title="Ganti tema terang/gelap" aria-label="Ganti tema">◐</button>
+    <% if (user) { %>
+      <span class="user-label"><%= user.username %> <span class="role-pill"><%= user.role %></span></span>
+      <button id="logout-btn" class="btn-ghost" type="button">Keluar</button>
+    <% } else { %>
+      <a class="btn btn-primary btn-sm" href="/admin/login">Masuk ke Dashboard</a>
+    <% } %>
+  </div>
+</header>
+
+<main class="container docs">
+  <div class="section-head">
+    <div>
+      <h1 class="page-title" style="margin-bottom: var(--space-xs);">Dokumentasi API</h1>
+      <p class="muted" style="margin: 0;">Gateway pembayaran QRIS dinamis: buat transaksi, tampilkan QR ke pelanggan, dan terima notifikasi pembayaran lewat webhook.</p>
+    </div>
+    <a class="btn btn-primary" href="/docs.md">⬇ Download .md</a>
+  </div>
+
+  <div class="stat-grid">
+    <div class="stat">
+      <span class="stat-label">Base URL</span>
+      <span class="stat-value mono" style="font-size: 18px;"><%= baseUrl %></span>
+    </div>
+    <div class="stat">
+      <span class="stat-label">Batas Nominal</span>
+      <span class="stat-value">Rp <%= maxAmount.toLocaleString('id-ID') %></span>
+    </div>
+    <div class="stat">
+      <span class="stat-label">Kedaluwarsa Default</span>
+      <span class="stat-value"><%= defaultExpiryMinutes %> menit</span>
+    </div>
+  </div>
+
+  <h2>Alur Singkat</h2>
+  <ol>
+    <li>Sistem Anda memanggil <code>POST /v1/transactions</code> → gateway membuat nominal unik (mis. Rp 50.137) dan QRIS dinamis.</li>
+    <li>Pelanggan memindai QR dan membayar tepat sesuai nominal unik.</li>
+    <li>Aplikasi PayHook mengirim notifikasi ke gateway → transaksi berubah <code>paid</code> → gateway mengirim webhook ke sistem Anda (dengan signature).</li>
+  </ol>
+
+  <h2>Autentikasi</h2>
+  <p class="muted small">Semua endpoint (kecuali QR image) memakai header <code>Authorization: Bearer &lt;token&gt;</code>. Token didapat dari dashboard:</p>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr><th>Token</th><th>Prefix</th><th>Untuk endpoint</th><th>Diambil dari</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td class="mono">API Key merchant</td>
+          <td class="mono">sk_live_</td>
+          <td class="mono">/v1/*</td>
+          <td>Dashboard merchant → tab <strong>Konfigurasi</strong> (tombol Salin)</td>
+        </tr>
+        <tr>
+          <td class="mono">Token PayHook</td>
+          <td class="mono">ph_</td>
+          <td class="mono">/internal/*</td>
+          <td>Dashboard merchant → tab <strong>Channel</strong> (token aplikasi PayHook milik sendiri)</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+  <pre class="code-block"><span class="c"># Contoh header auth</span>
+Authorization: Bearer sk_live_xxxxxxxx</pre>
+
+  <!-- ================= Buat transaksi ================= -->
+  <h2>1. Buat Transaksi</h2>
+  <div class="card">
+    <div class="section-head">
+      <h3 style="margin: 0;"><span class="method post">POST</span> <code>/v1/transactions</code></h3>
+    </div>
+    <p class="muted small">Membuat transaksi baru dan menghasilkan QRIS dinamis dengan nominal unik. <strong>Idempoten:</strong> memakai <code>ref_id</code> yang sama mengembalikan transaksi yang sama (status <code>200</code>, bukan 201).</p>
+
+    <h3>Parameter</h3>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Field</th><th>Wajib</th><th>Tipe</th><th>Keterangan</th></tr></thead>
+        <tbody>
+          <tr><td class="mono">ref_id</td><td>✔</td><td>string (≤ 128)</td><td>Referensi pesanan Anda (ID unik per merchant)</td></tr>
+          <tr><td class="mono">amount</td><td>✔</td><td>integer</td><td>Nominal dasar (Rp), maksimal <%= maxAmount.toLocaleString('id-ID') %></td></tr>
+          <tr><td class="mono">expiry_minutes</td><td>—</td><td>integer</td><td>Masa berlaku transaksi (1–1440). Default <%= defaultExpiryMinutes %> menit</td></tr>
+          <tr><td class="mono">metadata</td><td>—</td><td>object</td><td>Data tambahan bebas, dikembalikan apa adanya di respons &amp; webhook</td></tr>
+          <tr><td class="mono">callback_url</td><td>—</td><td>url</td><td>URL webhook khusus transaksi ini (menggantikan webhook URL merchant)</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>Contoh request</h3>
+    <pre class="code-block">curl -X POST <%= baseUrl %>/v1/transactions \
+  -H "Authorization: Bearer sk_live_xxx" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "ref_id": "INV-2024-001",
+    "amount": 50000,
+    "expiry_minutes": 15,
+    "metadata": { "customer_name": "Budi" }
+  }'</pre>
+
+    <h3>Contoh respons — <span class="ok">201 Created</span></h3>
+    <pre class="code-block">{
+  "id": "txn_abc123",
+  "ref_id": "INV-2024-001",
+  "status": "pending",
+  "requested_amount": 50000,
+  "actual_amount": 50137,
+  "qr_string": "0002010102...",
+  "qr_image_url": "<%= baseUrl %>/v1/transactions/txn_abc123/qr.png",
+  "expires_at": "2024-05-20T10:15:00Z",
+  "paid_at": null,
+  "metadata": { "customer_name": "Budi" }
+}</pre>
+    <p class="muted small"><code>actual_amount</code> adalah nominal unik yang harus dibayar pelanggan (nominal dasar + kode unik Rp 1–499). Tampilkan QR lewat <code>qr_string</code> (jika Anda punya pemindai QRIS) atau <code>qr_image_url</code> di tag <code>&lt;img&gt;</code>.</p>
+  </div>
+
+  <!-- ================= Cek status ================= -->
+  <h2>2. Cek Status Transaksi (polling)</h2>
+  <div class="card">
+    <div class="section-head">
+      <h3 style="margin: 0;"><span class="method get">GET</span> <code>/v1/transactions/:id</code></h3>
+    </div>
+    <p class="muted small">Cek status transaksi. Status berubah jadi <code>paid</code> saat pembayaran masuk. Alternatif yang lebih baik: tunggu webhook keluar.</p>
+    <pre class="code-block">curl <%= baseUrl %>/v1/transactions/txn_abc123 \
+  -H "Authorization: Bearer sk_live_xxx"</pre>
+  </div>
+
+  <!-- ================= QR image ================= -->
+  <h2>3. Gambar QR (publik)</h2>
+  <div class="card">
+    <div class="section-head">
+      <h3 style="margin: 0;"><span class="method get">GET</span> <code>/v1/transactions/:id/qr.png</code></h3>
+    </div>
+    <p class="muted small">Tanpa autentikasi — siap dipakai di tag <code>&lt;img&gt;</code> di halaman checkout Anda.</p>
+    <pre class="code-block">&lt;img src="<%= baseUrl %>/v1/transactions/txn_abc123/qr.png" alt="QRIS" /&gt;</pre>
+  </div>
+
+  <!-- ================= PayHook ================= -->
+  <h2>4. Notifikasi PayHook</h2>
+  <div class="card">
+    <div class="section-head">
+      <h3 style="margin: 0;"><span class="method post">POST</span> <code>/internal/webhook/payhook</code></h3>
+    </div>
+    <p class="muted small">Dikirim oleh aplikasi PayHook (di HP pemilik QRIS) saat ada uang masuk. Token = token aplikasi PayHook. Endpoint ini <strong>selalu membalas 200</strong> agar PayHook tidak mengulang pengiriman. Transaksi dicocokkan lewat <strong>nominal unik global</strong>.</p>
+    <pre class="code-block">curl -X POST <%= baseUrl %>/internal/webhook/payhook \
+  -H "Authorization: Bearer ph_xxx" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "event_id": "evt_xyz",
+    "event_type": "payment.incoming",
+    "amount": 50137,
+    "source": "DANA",
+    "reference": "REF123",
+    "timestamp": "2024-05-20 10:05:00"
+  }'</pre>
+    <p class="muted small"><code>amount</code> harus sama persis dengan <code>actual_amount</code> transaksi. <code>event_type</code> selain <code>payment.incoming</code> diabaikan.</p>
+  </div>
+
+  <!-- ================= Webhook keluar ================= -->
+  <h2>5. Webhook ke Sistem Anda</h2>
+  <div class="card">
+    <p class="muted small">Saat status transaksi berubah, gateway mengirim <code>POST</code> ke webhook URL merchant (atau <code>callback_url</code> transaksi) dengan dua header khusus:</p>
+    <pre class="code-block">X-Signature: sha256=&lt;hex HMAC-SHA256 dari raw body memakai webhook_secret&gt;
+X-Event: transaction.paid</pre>
+
+    <h3>Event yang dikirim</h3>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Event</th><th>Kapan</th><th>Keterangan</th></tr></thead>
+        <tbody>
+          <tr><td class="mono">transaction.paid</td><td>Pembayaran cocok &amp; terverifikasi</td><td>Proses pesanan Anda</td></tr>
+          <tr><td class="mono">transaction.refunded</td><td>Admin melakukan refund</td><td>Batalkan/kembalikan pesanan</td></tr>
+          <tr><td class="mono">webhook.test</td><td>URL/secret webhook diubah di dashboard</td><td>Webhook uji untuk memverifikasi konfigurasi</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>Contoh payload — transaction.paid</h3>
+    <pre class="code-block">{
+  "event": "transaction.paid",
+  "id": "txn_abc123",
+  "ref_id": "INV-2024-001",
+  "status": "paid",
+  "actual_amount": 50137,
+  "paid_at": "2024-05-20T10:05:05Z",
+  "metadata": { "customer_name": "Budi" }
+}</pre>
+
+    <h3>Verifikasi signature (Node.js)</h3>
+    <pre class="code-block">const crypto = require('crypto');
+
+function verifyWebhook(rawBody, signatureHeader, secret) {
+  const expected = 'sha256=' + crypto
+    .createHmac('sha256', secret)
+    .update(rawBody)
+    .digest('hex');
+  return crypto.timingSafeEqual(
+    Buffer.from(expected),
+    Buffer.from(signatureHeader)
+  );
+}</pre>
+    <div class="alert">⚠️ <strong>Penting:</strong> verifikasi harus memakai <strong>raw body</strong> persis seperti diterima — jangan <code>JSON.stringify</code> ulang objek hasil parse. Balas <strong>2xx</strong> agar gateway tidak mengulang pengiriman (retry backoff: 1m → 5m → 30m → 2j).</div>
+  </div>
+
+  <!-- ================= Status ================= -->
+  <h2>Status Transaksi</h2>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Status</th><th>Arti</th></tr></thead>
+      <tbody>
+        <tr><td><span class="badge pending">pending</span></td><td>Menunggu pembayaran</td></tr>
+        <tr><td><span class="badge paid">paid</span></td><td>Pembayaran masuk &amp; terverifikasi</td></tr>
+        <tr><td><span class="badge expired">expired</span></td><td>Melewati masa berlaku tanpa dibayar</td></tr>
+        <tr><td><span class="badge refunded">refunded</span></td><td>Dana dikembalikan oleh admin</td></tr>
+        <tr><td><span class="badge failed">failed</span></td><td>Gagal (mis. konversi QRIS bermasalah)</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- ================= Error ================= -->
+  <h2>Format Error</h2>
+  <p class="muted small">Setiap error mengembalikan status HTTP yang sesuai dengan body:</p>
+  <pre class="code-block">{
+  "error": {
+    "code": "invalid_amount",
+    "message": "amount harus integer positif"
+  }
+}</pre>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Kode</th><th>HTTP</th><th>Arti</th></tr></thead>
+      <tbody>
+        <tr><td class="mono">unauthorized</td><td>401</td><td>API key / PayHook token tidak valid</td></tr>
+        <tr><td class="mono">invalid_ref_id / invalid_amount / invalid_metadata / invalid_callback_url</td><td>400</td><td>Input tidak valid</td></tr>
+        <tr><td class="mono">no_active_qris / qris_not_available</td><td>400</td><td>Merchant belum punya QRIS aktif</td></tr>
+        <tr><td class="mono">converter_*</td><td>502/503</td><td>Konversi QRIS bermasalah — coba lagi</td></tr>
+        <tr><td class="mono">unique_amount_exhausted</td><td>503</td><td>Gagal membuat nominal unik — coba lagi</td></tr>
+        <tr><td class="mono">not_found</td><td>404</td><td>Transaksi tidak ditemukan</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="card" style="margin-top: var(--space-xl);">
+    <h3 style="margin-top: 0;">Langkah Berikutnya</h3>
+    <p class="muted small">Kelola API key, webhook URL &amp; secret, QRIS, dan PayHook lewat dashboard.</p>
+    <div class="row">
+      <% if (user) { %>
+        <a class="btn btn-primary" href="<%= user.role === 'admin' ? '/admin' : '/dashboard' %>">Buka Dashboard</a>
+      <% } else { %>
+        <a class="btn btn-primary" href="/admin/login">Masuk ke Dashboard</a>
+      <% } %>
+    </div>
+  </div>
+</main>
+
+<script src="/admin/dashboard.js"></script>
+</body>
+</html>

@@ -1,0 +1,53 @@
+<aside class="sidebar" id="sidebar">
+  <div class="sidebar-brand">
+    <span class="brand-logo" aria-hidden="true">◆</span>
+    <span class="brand-name">Gateway QRIS</span>
+  </div>
+
+  <nav class="sidebar-nav" role="navigation" aria-label="Navigasi utama">
+    <% if (user.role === 'admin') { %>
+      <div class="nav-group">
+        <p class="nav-group-label">Umum</p>
+        <a class="nav-item <%= activePanel === 'dashboard' ? 'active' : '' %>" href="/admin" data-tab="dashboard"><i class="fa-solid fa-house-chimney"></i> Dashboard</a>
+        <a class="nav-item <%= activePanel === 'income' ? 'active' : '' %>" href="/admin?panel=income" data-tab="income"><i class="fa-solid fa-circle-info"></i> Penghasilan</a>
+      </div>
+      <div class="nav-group">
+        <p class="nav-group-label">Keuangan</p>
+        <a class="nav-item <%= activePanel === 'transactions' ? 'active' : '' %>" href="/admin?panel=transactions" data-tab="transactions"><i class="fa-solid fa-receipt"></i> Transaksi</a>
+        <a class="nav-item <%= activePanel === 'orphans' ? 'active' : '' %>" href="/admin?panel=orphans" data-tab="orphans"><i class="fa-solid fa-triangle-exclamation"></i> Tak Teridentifikasi</a>
+      </div>
+      <div class="nav-group">
+        <p class="nav-group-label">Manajemen</p>
+        <a class="nav-item <%= activePanel === 'merchants' ? 'active' : '' %>" href="/admin?panel=merchants" data-tab="merchants"><i class="fa-solid fa-user-group"></i> Merchant</a>
+        <a class="nav-item <%= activePanel === 'channels' ? 'active' : '' %>" href="/admin?panel=channels" data-tab="channels"><i class="fa-solid fa-arrow-rotate"></i> Channel</a>
+      </div>
+    <% } else { %>
+      <div class="nav-group">
+        <p class="nav-group-label">Umum</p>
+        <a class="nav-item <%= activePanel === 'dashboard' ? 'active' : '' %>" href="/dashboard" data-tab="dashboard"><i class="fa-solid fa-house-chimney"></i> Dashboard</a>
+        <a class="nav-item <%= activePanel === 'saldo' ? 'active' : '' %>" href="/dashboard?panel=saldo" data-tab="saldo"><i class="fa-solid fa-wallet"></i> Saldo</a>
+        <a class="nav-item <%= activePanel === 'config' ? 'active' : '' %>" href="/dashboard?panel=config" data-tab="config"><i class="fa-solid fa-gear"></i> Konfigurasi</a>
+      </div>
+      <div class="nav-group">
+        <p class="nav-group-label">Keuangan</p>
+        <a class="nav-item <%= activePanel === 'transactions' ? 'active' : '' %>" href="/dashboard?panel=transactions" data-tab="transactions"><i class="fa-solid fa-receipt"></i> Transaksi</a>
+        <a class="nav-item <%= activePanel === 'orphans' ? 'active' : '' %>" href="/dashboard?panel=orphans" data-tab="orphans"><i class="fa-solid fa-triangle-exclamation"></i> Tak Teridentifikasi</a>
+      </div>
+      <div class="nav-group">
+        <p class="nav-group-label">Manajemen</p>
+        <a class="nav-item <%= activePanel === 'channels' ? 'active' : '' %>" href="/dashboard?panel=channels" data-tab="channels"><i class="fa-solid fa-arrow-rotate"></i> Channel</a>
+      </div>
+    <% } %>
+  </nav>
+
+  <div class="sidebar-footer">
+    <a class="nav-item" href="/docs"><i class="fa-solid fa-book"></i> Dokumentasi API</a>
+    <div class="sidebar-user">
+      <span class="user-label"><%= user.username %> <span class="role-pill"><%= user.role %></span></span>
+      <div class="sidebar-actions">
+        <button id="theme-toggle" class="icon-btn" type="button" title="Ganti tema terang/gelap" aria-label="Ganti tema">◐</button>
+        <button id="logout-btn" class="btn-ghost btn-sm" type="button">Keluar</button>
+      </div>
+    </div>
+  </div>
+</aside>

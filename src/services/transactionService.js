@@ -6,7 +6,7 @@ const logger = require('../utils/logger');
 
 const URL_REGEX = /^https?:\/\/.+/i;
 
-function createTransactionService(db, config, uniqueAmount, qrisConverter, webhookSender) {
+function createTransactionService(db, config, uniqueAmount, qrisConverter, webhookSender, qrisAccountService) {
   function validateCreateInput(input) {
     if (!input || typeof input !== 'object') {
       throw new ApiError(400, 'invalid_body', 'Request body tidak valid');
@@ -65,14 +65,28 @@ function createTransactionService(db, config, uniqueAmount, qrisConverter, webho
       return { transaction: rowToObject(existing), created: false };
     }
 
-    const actualAmount = uniqueAmount.generate(merchant.id, valid.amount);
-    const { qrString, qrBase64 } = await qrisConverter.convert(merchant.qris_static, actualAmount);
+    // QRIS aktif merchant (dari pool admin atau miliknya yang disetujui)
+    const qrisAccount = qrisAccountService.getActiveForMerchant(merchant.id);
+    if (!qrisAccount) {
+      throw new ApiError(
+        400,
+        'no_active_qris',
+        'Merchant belum memiliki QRIS aktif. Pilih QRIS dari admin atau ajukan QRIS sendiri di dashboard.'
+      );
+    }
+    if (qrisAccount.status !== 'active') {
+      throw new ApiError(400, 'qris_not_available', 'QRIS aktif merchant sedang tidak tersedia');
+    }
+
+    const actualAmount = uniqueAmount.generate(valid.amount);
+    const { qrString, qrBase64 } = await qrisConverter.convert(qrisAccount.qris_static, actualAmount);
 
     const now = new Date();
     const expiresAt = new Date(now.getTime() + valid.expiry_minutes * 60_000);
     const txn = {
       id: generateId('txn'),
       merchant_id: merchant.id,
+      qris_account_id: qrisAccount.id,
       ref_id: valid.ref_id,
       requested_amount: valid.amount,
       actual_amount: actualAmount,
@@ -97,11 +111,11 @@ function createTransactionService(db, config, uniqueAmount, qrisConverter, webho
     try {
       db.prepare(
         `INSERT INTO transactions (
-          id, merchant_id, ref_id, requested_amount, actual_amount, qr_string, qr_base64, status,
+          id, merchant_id, qris_account_id, ref_id, requested_amount, actual_amount, qr_string, qr_base64, status,
           callback_url, metadata, paid_at, paid_source, paid_reference, payhook_event_id,
           expires_at, created_at, webhook_status, webhook_attempts, webhook_next_retry_at, webhook_last_error, refunded_at
         ) VALUES (
-          @id, @merchant_id, @ref_id, @requested_amount, @actual_amount, @qr_string, @qr_base64, @status,
+          @id, @merchant_id, @qris_account_id, @ref_id, @requested_amount, @actual_amount, @qr_string, @qr_base64, @status,
           @callback_url, @metadata, @paid_at, @paid_source, @paid_reference, @payhook_event_id,
           @expires_at, @created_at, @webhook_status, @webhook_attempts, @webhook_next_retry_at, @webhook_last_error, @refunded_at
         )`
@@ -119,7 +133,7 @@ function createTransactionService(db, config, uniqueAmount, qrisConverter, webho
       throw err;
     }
 
-    logger.info(`[txn] dibuat ${txn.id} merchant=${merchant.id} ref_id=${txn.ref_id} actual=${actualAmount}`);
+    logger.info(`[txn] dibuat ${txn.id} merchant=${merchant.id} qris=${qrisAccount.id} ref_id=${txn.ref_id} actual=${actualAmount}`);
     return { transaction: txn, created: true };
   }
 
@@ -142,8 +156,11 @@ function createTransactionService(db, config, uniqueAmount, qrisConverter, webho
     return row ? row.qr_base64 : null;
   }
 
-  /** Proses notifikasi PayHook untuk merchant tertentu (dari payhook_token). */
-  function handlePayhookNotification(merchant, { event_id, event_type, amount, source, reference }) {
+  /**
+   * Proses notifikasi PayHook.
+   * @param {object} payhookApp aplikasi PayHook (dari token) — bisa dipakai banyak merchant
+   */
+  function handlePayhookNotification(payhookApp, { event_id, event_type, amount, source, reference }) {
     // Idempotensi event_id (cegah double process)
     const dupTxn = db.prepare('SELECT 1 FROM transactions WHERE payhook_event_id = ? LIMIT 1').get(event_id);
     const dupOrphan = db.prepare('SELECT 1 FROM orphan_payments WHERE event_id = ? LIMIT 1').get(event_id);
@@ -155,29 +172,65 @@ function createTransactionService(db, config, uniqueAmount, qrisConverter, webho
     const now = new Date();
     const nowIso = now.toISOString();
 
-    // Cari transaksi pending merchant ini dengan nominal unik yang belum expired
+    // Nominal unik bersifat GLOBAL → cari transaksi pending dengan nominal ini
     const pending = db
       .prepare(
         `SELECT * FROM transactions
-         WHERE merchant_id = ? AND status = 'pending' AND actual_amount = ? AND expires_at > ?
+         WHERE status = 'pending' AND actual_amount = ? AND expires_at > ?
          ORDER BY created_at ASC LIMIT 1`
       )
-      .get(merchant.id, amount, nowIso);
+      .get(amount, nowIso);
 
-    if (!pending) {
+    function recordOrphan(merchantId, note) {
       db.prepare(
         `INSERT INTO orphan_payments (merchant_id, event_id, amount, source, reference, received_at, note)
          VALUES (?, ?, ?, ?, ?, ?, ?)`
-      ).run(merchant.id, event_id, amount, source || null, reference || null, nowIso, 'tidak ada transaksi pending yang cocok');
-      logger.warn(`[payhook] orphan payment merchant=${merchant.id} event=${event_id} amount=${amount}`);
+      ).run(merchantId, event_id, amount, source || null, reference || null, nowIso, note);
+      logger.warn(`[payhook] orphan payment event=${event_id} amount=${amount} note=${note}`);
+    }
+
+    if (!pending) {
+      const ownerMerchantId = payhookApp.owner_type === 'merchant' ? payhookApp.merchant_id : null;
+      recordOrphan(ownerMerchantId, `tidak ada transaksi pending yang cocok (payhook: ${payhookApp.name})`);
       return { matched: false, reason: 'no_match' };
     }
 
+    // Verifikasi merchant pemilik transaksi boleh memakai aplikasi PayHook ini
+    const merchant = db.prepare('SELECT * FROM merchants WHERE id = ?').get(pending.merchant_id);
+    const allowed =
+      merchant &&
+      merchant.status === 'active' &&
+      payhookApp.status === 'active' &&
+      ((payhookApp.owner_type === 'merchant' && payhookApp.merchant_id === merchant.id) ||
+        (payhookApp.owner_type === 'admin' &&
+          db
+            .prepare('SELECT 1 FROM merchant_payhook WHERE merchant_id = ? AND payhook_app_id = ? AND is_active = 1')
+            .get(merchant.id, payhookApp.id)));
+
+    if (!allowed) {
+      recordOrphan(
+        pending.merchant_id,
+        `nominal cocok dengan ${pending.id} tapi aplikasi PayHook "${payhookApp.name}" tidak terdaftar untuk merchant tersebut`
+      );
+      return { matched: false, reason: 'app_not_assigned' };
+    }
+
+    // Hitung pembagian saldo saat pembayaran (snapshot pemilik QRIS saat itu):
+    // - QRIS admin (pool): kode unik (actual - requested) jadi fee admin, saldo merchant = requested_amount
+    // - QRIS milik merchant sendiri: saldo merchant = actual_amount (full), fee admin 0
+    const qrisOwner = pending.qris_account_id
+      ? db.prepare('SELECT owner_type FROM qris_accounts WHERE id = ?').get(pending.qris_account_id)
+      : null;
+    const isAdminQris = !!qrisOwner && qrisOwner.owner_type === 'admin';
+    const merchantCredit = isAdminQris ? pending.requested_amount : pending.actual_amount;
+    const adminFee = isAdminQris ? pending.actual_amount - pending.requested_amount : 0;
+
     db.prepare(
       `UPDATE transactions
-       SET status = 'paid', paid_at = ?, paid_source = ?, paid_reference = ?, payhook_event_id = ?
+       SET status = 'paid', paid_at = ?, paid_source = ?, paid_reference = ?, payhook_event_id = ?,
+           merchant_credit = ?, admin_fee = ?
        WHERE id = ?`
-    ).run(nowIso, source || null, reference || null, event_id, pending.id);
+    ).run(nowIso, source || null, reference || null, event_id, merchantCredit, adminFee, pending.id);
 
     const paidTxn = {
       ...pending,
@@ -186,13 +239,58 @@ function createTransactionService(db, config, uniqueAmount, qrisConverter, webho
       paid_source: source || null,
       paid_reference: reference || null,
       payhook_event_id: event_id,
+      merchant_credit: merchantCredit,
+      admin_fee: adminFee,
     };
-    logger.info(`[payhook] transaksi ${pending.id} dibayar amount=${amount} source=${source || '-'}`);
+    logger.info(
+      `[payhook] transaksi ${pending.id} dibayar amount=${amount} source=${source || '-'} kredit=${merchantCredit} fee=${adminFee}`
+    );
 
     // Kirim webhook ke merchant secara async (retry di-handle job)
     webhookSender.send(paidTxn).catch((err) => logger.error(`[webhook] error tidak terduga: ${err.message}`));
 
     return { matched: true, transaction: paidTxn };
+  }
+
+  // ===== Saldo & penghasilan =====
+
+  /** Saldo merchant = total kredit dari transaksi paid (refund tidak dihitung). */
+  function getMerchantSaldo(merchantId) {
+    const row = db
+      .prepare(
+        `SELECT COALESCE(SUM(merchant_credit), 0) AS saldo, COUNT(*) AS paid_count
+         FROM transactions WHERE merchant_id = ? AND status = 'paid'`
+      )
+      .get(merchantId);
+    return { saldo: row.saldo, paid_count: row.paid_count };
+  }
+
+  /** Ringkasan penghasilan admin: total fee kode unik + breakdown per merchant. */
+  function getAdminIncomeSummary() {
+    const total = db
+      .prepare(
+        `SELECT COALESCE(SUM(admin_fee), 0) AS total_fee,
+                COALESCE(SUM(merchant_credit), 0) AS total_merchant_credit,
+                COUNT(*) AS paid_count
+         FROM transactions WHERE status = 'paid'`
+      )
+      .get();
+
+    const perMerchant = db
+      .prepare(
+        `SELECT m.id, m.name,
+                COALESCE(SUM(t.admin_fee), 0) AS fee,
+                COALESCE(SUM(t.merchant_credit), 0) AS merchant_credit,
+                COUNT(*) AS paid_count
+         FROM transactions t
+         JOIN merchants m ON m.id = t.merchant_id
+         WHERE t.status = 'paid'
+         GROUP BY m.id, m.name
+         ORDER BY fee DESC, m.name ASC`
+      )
+      .all();
+
+    return { ...total, per_merchant: perMerchant };
   }
 
   // ===== Query untuk dashboard (admin) & dashboard merchant =====
@@ -255,6 +353,179 @@ function createTransactionService(db, config, uniqueAmount, qrisConverter, webho
     };
   }
 
+  // ===== Statistik & chart untuk dashboard =====
+
+  /** Bagikan { label, value } dari kolom tertentu transaksi paid (untuk donut). */
+  function distributionOf(column, where = 'status = \'paid\'') {
+    const allowed = ['paid_source', 'qris_account_id'];
+    if (!allowed.includes(column)) throw new Error(`kolom tidak diizinkan: ${column}`);
+    const rows = db
+      .prepare(
+        `SELECT COALESCE(NULLIF(${column}, ''), 'Lainnya') AS label, COUNT(*) AS value
+         FROM transactions WHERE ${where} GROUP BY label ORDER BY value DESC`
+      )
+      .all();
+    return rows.map((r) => ({ label: r.label, value: r.value }));
+  }
+
+  /** Baris waktu harian: { day, value } untuk rentang [fromIso, toIso). */
+  function dailySeries(column, fromIso, toIso, where = 'status = \'paid\'') {
+    if (!['admin_fee', 'merchant_credit'].includes(column)) throw new Error(`kolom tidak diizinkan: ${column}`);
+    const rows = db
+      .prepare(
+        `SELECT date(paid_at) AS day, COALESCE(SUM(${column}), 0) AS value
+         FROM transactions WHERE ${where} AND paid_at >= ? AND paid_at < ?
+         GROUP BY day ORDER BY day ASC`
+      )
+      .all(fromIso, toIso);
+    return rows.map((r) => ({ day: r.day, value: r.value }));
+  }
+
+  /** Kenaikan/penurunan persen antara dua nilai (null jika tidak bisa dihitung). */
+  function pctChange(current, previous) {
+    if (!previous || previous === 0) return null;
+    return Math.round(((current - previous) / previous) * 1000) / 10;
+  }
+
+  /** 7 hari terakhir (termasuk hari ini) + 7 hari sebelumnya, dalam zona waktu lokal. */
+  function last7AndPrior7() {
+    const days = [];
+    const now = new Date();
+    now.setHours(23, 59, 59, 999);
+    for (let i = 0; i < 7; i++) {
+      const d = new Date(now);
+      d.setDate(d.getDate() - i);
+      days.unshift(d);
+    }
+    const start = new Date(days[0]);
+    start.setHours(0, 0, 0, 0);
+    const priorEnd = new Date(start);
+    const priorStart = new Date(priorEnd);
+    priorStart.setDate(priorStart.getDate() - 7);
+    return { days, startIso: start.toISOString(), priorStartIso: priorStart.toISOString(), priorEndIso: priorEnd.toISOString() };
+  }
+
+  /** Statistik dashboard admin (donut, line, general, top merchant). */
+  function getAdminDashboardStats() {
+    const { days, startIso, priorStartIso, priorEndIso } = last7AndPrior7();
+
+    const series = dailySeries('admin_fee', startIso, new Date(days[6]).toISOString());
+    const seriesMap = new Map(series.map((r) => [r.day, r.value]));
+
+    const totals = db
+      .prepare(
+        `SELECT COALESCE(SUM(admin_fee), 0) AS fee,
+                COALESCE(SUM(merchant_credit), 0) AS credit,
+                COUNT(*) AS paid_count
+         FROM transactions WHERE status = 'paid'`
+      )
+      .get();
+    const totalTxns = db.prepare('SELECT COUNT(*) AS c FROM transactions').get().c;
+
+    const periodTotals = db
+      .prepare(
+        `SELECT COALESCE(SUM(admin_fee), 0) AS fee, COALESCE(SUM(merchant_credit), 0) AS credit
+         FROM transactions WHERE status = 'paid' AND paid_at >= ? AND paid_at < ?`
+      )
+      .get(startIso, priorEndIso);
+    const priorTotals = db
+      .prepare(
+        `SELECT COALESCE(SUM(admin_fee), 0) AS fee, COALESCE(SUM(merchant_credit), 0) AS credit
+         FROM transactions WHERE status = 'paid' AND paid_at >= ? AND paid_at < ?`
+      )
+      .get(priorStartIso, startIso);
+
+    const topMerchants = db
+      .prepare(
+        `SELECT m.name, m.id,
+                COUNT(*) AS paid_count,
+                COALESCE(SUM(t.admin_fee), 0) AS fee,
+                COALESCE(SUM(t.merchant_credit), 0) AS credit
+         FROM transactions t JOIN merchants m ON m.id = t.merchant_id
+         WHERE t.status = 'paid'
+         GROUP BY m.id, m.name
+         ORDER BY fee DESC, credit DESC
+         LIMIT 10`
+      )
+      .all();
+
+    return {
+      sourceDist: distributionOf('paid_source'),
+      incomeSeries: {
+        labels: days.map((d) => `${d.getDate()}.${String(d.getMonth() + 1).padStart(2, '0')}`),
+        data: days.map((d) => {
+          const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+          return seriesMap.get(key) || 0;
+        }),
+      },
+      generalStats: {
+        revenue: totals.fee,
+        revenueTrend: pctChange(periodTotals.fee, priorTotals.fee),
+        income: totals.credit,
+        incomeTrend: pctChange(periodTotals.credit, priorTotals.credit),
+      },
+      paidCount: totals.paid_count,
+      totalTxns,
+      topMerchants,
+    };
+  }
+
+  /** Statistik dashboard merchant (donut status, line saldo masuk, general). */
+  function getMerchantDashboardStats(merchantId) {
+    const { days, startIso, priorStartIso, priorEndIso } = last7AndPrior7();
+
+    // Distribusi status transaksi
+    const statusDist = db
+      .prepare(
+        `SELECT status AS label, COUNT(*) AS value
+         FROM transactions
+         WHERE merchant_id = ? GROUP BY status ORDER BY value DESC`
+      )
+      .all(merchantId)
+      .map((r) => ({ label: r.label, value: r.value }));
+
+    // Series saldo masuk (merchant_credit) per hari 7 terakhir
+    const creditRows = db
+      .prepare(
+        `SELECT date(paid_at) AS day, COALESCE(SUM(merchant_credit), 0) AS value
+         FROM transactions
+         WHERE status = 'paid' AND merchant_id = ? AND paid_at >= ? AND paid_at < ?
+         GROUP BY day ORDER BY day ASC`
+      )
+      .all(merchantId, startIso, priorEndIso);
+    const creditMap = new Map(creditRows.map((r) => [r.day, r.value]));
+
+    const saldoSeries = {
+      labels: days.map((d) => `${d.getDate()}.${String(d.getMonth() + 1).padStart(2, '0')}`),
+      data: days.map((d) => {
+        const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+        return creditMap.get(key) || 0;
+      }),
+    };
+
+    // Trendi saldo 7 hari vs 7 hari sebelumnya
+    const periodTotals = db
+      .prepare(
+        `SELECT COALESCE(SUM(merchant_credit), 0) AS credit
+         FROM transactions
+         WHERE status = 'paid' AND merchant_id = ? AND paid_at >= ? AND paid_at < ?`
+      )
+      .get(merchantId, startIso, priorEndIso);
+    const priorTotals = db
+      .prepare(
+        `SELECT COALESCE(SUM(merchant_credit), 0) AS credit
+         FROM transactions
+         WHERE status = 'paid' AND merchant_id = ? AND paid_at >= ? AND paid_at < ?`
+      )
+      .get(merchantId, priorStartIso, startIso);
+
+    return {
+      statusDist,
+      saldoSeries,
+      saldoTrend: pctChange(periodTotals.credit, priorTotals.credit),
+    };
+}
+
   // ===== Aksi admin =====
 
   function forceExpire(id) {
@@ -299,6 +570,10 @@ function createTransactionService(db, config, uniqueAmount, qrisConverter, webho
     getTransaction,
     getQrBase64,
     handlePayhookNotification,
+    getMerchantSaldo,
+    getAdminIncomeSummary,
+    getAdminDashboardStats,
+    getMerchantDashboardStats,
     listTransactions,
     listOrphanPayments,
     forceExpire,

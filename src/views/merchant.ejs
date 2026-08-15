@@ -1,0 +1,382 @@
+<%- include('partials/head', { title: 'Dashboard — Gateway QRIS' }) %>
+
+<main class="layout">
+  <%- include('partials/sidebar', { user, activePanel }) %>
+  <div class="content">
+    <header class="content-head">
+      <h1 class="page-title">Dashboard Merchant</h1>
+      <button id="mobile-menu-btn" class="icon-btn menu-btn" type="button" aria-label="Menu"><i class="fa-solid fa-bars"></i></button>
+    </header>
+
+    <!-- ================= Dashboard overview ================= -->
+    <section class="tab-panel" data-panel="dashboard">
+      <div class="stat-grid">
+        <div class="stat">
+          <span class="stat-label">Total Saldo</span>
+          <span class="stat-value">Rp <%= saldo.saldo.toLocaleString('id-ID') %></span>
+          <% if (stats.saldoTrend !== null) { %>
+            <span class="trend <%= stats.saldoTrend >= 0 ? 'up' : 'down' %>">
+              <i class="fa-solid <%= stats.saldoTrend >= 0 ? 'fa-arrow-trend-up' : 'fa-arrow-trend-down' %>"></i>
+              <%= Math.abs(stats.saldoTrend) %>% <span class="muted small">vs 7 hari lalu</span>
+            </span>
+          <% } %>
+        </div>
+        <div class="stat">
+          <span class="stat-label">Transaksi Dibayar</span>
+          <span class="stat-value"><%= saldo.paid_count.toLocaleString('id-ID') %></span>
+        </div>
+        <div class="stat">
+          <span class="stat-label">QRIS Aktif</span>
+          <span class="stat-value small-value"><%= qris.active ? qris.active.name : '—' %></span>
+        </div>
+        <div class="stat">
+          <span class="stat-label">Channel Tersedia</span>
+          <span class="stat-value"><%= (qris.selectable.length + payhook.selectable.length) %></span>
+          <span class="muted small">QRIS + PayHook</span>
+        </div>
+      </div>
+
+      <div class="charts-row">
+        <div class="card">
+          <div class="section-head"><h3>Distribusi Status</h3></div>
+          <div class="chart-wrap"><canvas id="status-donut" height="240" aria-label="Distribusi status transaksi"></canvas></div>
+        </div>
+        <div class="card">
+          <div class="section-head"><h3>Saldo Masuk 7 Hari</h3></div>
+          <div class="chart-wrap"><canvas id="saldo-line" height="240" aria-label="Saldo masuk per hari"></canvas></div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="section-head">
+          <h3>Transaksi Terbaru</h3>
+          <a class="btn-ghost btn-sm" href="/dashboard?panel=transactions">Lihat semua transaksi</a>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr><th>Ref</th><th>Status</th><th>Nominal</th><th>Dibayar</th></tr>
+            </thead>
+            <tbody>
+              <% if (txns.data.length === 0) { %>
+                <tr><td colspan="4" class="empty">Belum ada transaksi.</td></tr>
+              <% } %>
+              <% txns.data.slice(0, 10).forEach(function (t) { %>
+                <tr>
+                  <td><%= t.ref_id %></td>
+                  <td><span class="badge <%= t.status %>"><%= t.status %></span></td>
+                  <td class="mono"><%= t.actual_amount.toLocaleString('id-ID') %></td>
+                  <td class="small"><%= t.paid_at ? new Date(t.paid_at).toLocaleString('id-ID') : '-' %></td>
+                </tr>
+              <% }) %>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- ================= Saldo ================= -->
+    <section class="card tab-panel" data-panel="saldo" hidden>
+      <div class="section-head"><h2>Saldo</h2></div>
+      <% if (qris.active && qris.active.owner_type === 'admin') { %>
+        <p class="muted small">QRIS pool admin dipakai: kode unik (Rp 1–499) dipotong sebagai biaya gateway dan <strong>tidak masuk saldo</strong>. Saldo Anda = nominal dasar transaksi.</p>
+      <% } else { %>
+        <p class="muted small">QRIS milik sendiri dipakai: seluruh nominal (termasuk kode unik) masuk saldo Anda.</p>
+      <% } %>
+
+      <div class="stat-grid">
+        <div class="stat">
+          <span class="stat-label">Total Saldo</span>
+          <span class="stat-value">Rp <%= saldo.saldo.toLocaleString('id-ID') %></span>
+        </div>
+        <div class="stat">
+          <span class="stat-label">Transaksi Dibayar</span>
+          <span class="stat-value"><%= saldo.paid_count %></span>
+        </div>
+      </div>
+
+      <h3>Rincian Transaksi Dibayar</h3>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr><th>Ref</th><th>Nominal Dibayar</th><th>Kode Unik</th><th>Masuk Saldo</th><th>Dibayar</th></tr>
+          </thead>
+          <tbody>
+            <% if (txns.data.filter(function (t) { return t.status === 'paid'; }).length === 0) { %>
+              <tr><td colspan="5" class="empty">Belum ada transaksi yang dibayar. Transaksi lunas akan muncul di sini.</td></tr>
+            <% } %>
+            <% txns.data.filter(function (t) { return t.status === 'paid'; }).forEach(function (t) { %>
+              <tr>
+                <td><%= t.ref_id %></td>
+                <td class="mono">Rp <%= t.actual_amount.toLocaleString('id-ID') %></td>
+                <td class="mono">Rp <%= (t.actual_amount - t.requested_amount).toLocaleString('id-ID') %></td>
+                <td class="mono"><strong>Rp <%= t.merchant_credit.toLocaleString('id-ID') %></strong></td>
+                <td class="small"><%= new Date(t.paid_at).toLocaleString('id-ID') %></td>
+              </tr>
+            <% }) %>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- ================= Konfigurasi ================= -->
+    <section class="card tab-panel" data-panel="config" hidden>
+      <div class="section-head"><h2>Konfigurasi Merchant</h2></div>
+      <div class="kv"><span>Nama</span><strong><%= merchant.name %></strong></div>
+      <div class="kv"><span>Status</span><span class="badge <%= merchant.status %>"><%= merchant.status %></span></div>
+      <div class="kv">
+        <span>API Key</span>
+        <span class="kv-value"><span class="mono secret"><%= merchant.api_key %></span> <button class="copy-btn" type="button" data-copy="<%= merchant.api_key %>">Salin</button></span>
+      </div>
+      <div class="kv">
+        <span>Webhook URL</span>
+        <span class="kv-value">
+          <span class="small"><%= merchant.webhook_url %></span>
+          <button class="btn-ghost btn-sm" type="button" data-show="dash-webhook-wrap">Ubah URL</button>
+        </span>
+      </div>
+      <div id="dash-webhook-wrap" class="hidden form-wrap">
+        <form id="dash-webhook-form" class="form-grid">
+          <div>
+            <label for="dw-url">Webhook URL baru</label>
+            <input id="dw-url" name="webhook_url" type="url" value="<%= merchant.webhook_url %>" required />
+          </div>
+          <div class="form-actions">
+            <button type="submit" class="btn btn-sm">Simpan</button>
+            <button type="button" class="btn-ghost btn-sm" data-hide="dash-webhook-wrap">Batal</button>
+          </div>
+        </form>
+      </div>
+      <div class="kv">
+        <span>Webhook Secret</span>
+        <span class="kv-value">
+          <span class="mono secret"><%= merchant.webhook_secret %></span>
+          <button class="copy-btn" type="button" data-copy="<%= merchant.webhook_secret %>">Salin</button>
+          <button class="btn-ghost btn-sm" type="button" data-action="dash-rotate-webhook-secret">Buat Secret Baru</button>
+        </span>
+      </div>
+      <p class="muted small">Secret dipakai untuk memverifikasi tanda tangan (signature) notifikasi webhook dari gateway. Setiap kali URL atau secret diubah, gateway mengirim <strong>webhook uji</strong> ke URL Anda agar konfigurasi baru bisa dicek. Secret lama langsung tidak berlaku.</p>
+      <div class="row">
+        <button class="btn btn-sm" type="button" data-action="dash-rotate-key">Buat API Key Baru</button>
+        <button class="btn-ghost btn-sm" type="button" data-action="dash-change-password">Ubah Password</button>
+      </div>
+    </section>
+
+    <!-- ================= Channel (QRIS + PayHook) ================= -->
+    <section class="card tab-panel" data-panel="channels" hidden>
+      <div class="section-head"><h2>Channel / Payment Channel</h2></div>
+      <p class="muted small">Channel adalah pasangan QRIS statis + aplikasi PayHook yang memproses pembayaran. Default: channel admin (langsung aktif, tanpa perlu konfigurasi).</p>
+
+      <% if (!qris.active) { %>
+        <div class="alert">Belum ada QRIS aktif. Pilih dari daftar di bawah, atau ajukan channel sendiri (perlu disetujui admin).</div>
+      <% } %>
+
+      <h3>Channel Aktif</h3>
+      <div class="kv">
+        <span>QRIS</span>
+        <span class="kv-value">
+          <% if (qris.active) { %>
+            <strong><%= qris.active.name %></strong>
+            <span class="badge <%= qris.active.status %>"><%= qris.active.status %></span>
+            <span class="muted small"><%= qris.active.owner_type === 'admin' ? 'pool admin' : 'milik sendiri' %></span>
+          <% } else { %>
+            <span class="muted">—</span>
+          <% } %>
+        </span>
+      </div>
+      <div class="kv">
+        <span>PayHook</span>
+        <span class="kv-value">
+          <% if (payhook.active) { %>
+            <strong><%= payhook.active.name %></strong>
+            <span class="badge <%= payhook.active.status %>"><%= payhook.active.status %></span>
+            <span class="muted small"><%= payhook.active.owner_type === 'admin' ? 'pool admin' : 'milik sendiri' %></span>
+          <% } else { %>
+            <span class="muted">—</span>
+          <% } %>
+        </span>
+      </div>
+
+      <% if (payhook.active && payhook.active.owner_type === 'merchant') { %>
+        <div class="kv">
+          <span>Token PayHook (untuk aplikasi PayHook Anda)</span>
+          <span class="kv-value"><span class="mono secret"><%= payhook.active.token %></span> <button class="copy-btn" type="button" data-copy="<%= payhook.active.token %>">Salin</button></span>
+        </div>
+        <div class="row">
+          <button class="btn-ghost btn-sm" type="button" data-action="dash-payhook-rotate">Buat Token PayHook Baru</button>
+        </div>
+      <% } else { %>
+        <p class="muted small">Channel admin sedang dipakai. Token dikelola admin, tidak perlu diatur di sini.</p>
+      <% } %>
+
+      <h3>Pilih Channel</h3>
+      <p class="muted small">QRIS/PayHook dari pool admin langsung aktif. Milik sendiri perlu disetujui admin dulu.</p>
+      <div class="filters">
+        <select id="qris-select">
+          <option value="">— Pilih QRIS —</option>
+          <% qris.selectable.forEach(function (q) { %>
+            <option value="<%= q.id %>"><%= q.name %> (<%= q.owner_type === 'admin' ? 'pool admin' : 'milik sendiri' %>)</option>
+          <% }) %>
+        </select>
+        <button class="btn btn-sm" type="button" data-action="qris-select">Pakai QRIS ini</button>
+        <select id="payhook-select">
+          <option value="">— Pilih PayHook —</option>
+          <% payhook.selectable.forEach(function (p) { %>
+            <option value="<%= p.id %>"><%= p.name %> (<%= p.owner_type === 'admin' ? 'pool admin' : 'milik sendiri' %>)</option>
+          <% }) %>
+        </select>
+        <button class="btn btn-sm" type="button" data-action="payhook-select">Pakai PayHook ini</button>
+      </div>
+
+      <h3>Channel Sendiri</h3>
+      <p class="muted small">Punya QRIS statis atau aplikasi PayHook sendiri? Ajukan di sini dan pantau statusnya di tabel bawah.</p>
+      <div class="row">
+        <button id="btn-request-channel" class="btn btn-primary" type="button">+ Ajukan Channel Sendiri</button>
+      </div>
+
+      <% if (qris.mine.length > 0 || payhook.mine.length > 0) { %>
+        <h3>Pengajuan Saya</h3>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Nama</th><th>Jenis</th><th>Status</th><th>Token</th></tr></thead>
+            <tbody>
+              <% qris.mine.forEach(function (q) { %>
+                <tr>
+                  <td><%= q.name %></td>
+                  <td>QRIS</td>
+                  <td><span class="badge <%= q.status %>"><%= q.status %></span></td>
+                  <td class="muted small">-</td>
+                </tr>
+              <% }) %>
+              <% payhook.mine.forEach(function (p) { %>
+                <tr>
+                  <td><%= p.name %></td>
+                  <td>PayHook</td>
+                  <td><span class="badge <%= p.status %>"><%= p.status %></span></td>
+                  <td><span class="mono secret"><%= p.token %></span> <button class="copy-btn" type="button" data-copy="<%= p.token %>">Salin</button></td>
+                </tr>
+              <% }) %>
+            </tbody>
+          </table>
+        </div>
+      <% } %>
+    </section>
+
+    <!-- ================= Transaksi ================= -->
+    <section class="card tab-panel" data-panel="transactions" hidden>
+      <div class="section-head">
+        <h2>Transaksi Saya</h2>
+        <form class="filters" method="get" action="/dashboard">
+          <select name="status">
+            <option value="">Semua status</option>
+            <% ['pending', 'paid', 'expired', 'refunded'].forEach(function (s) { %>
+              <option value="<%= s %>" <%= filters.status === s ? 'selected' : '' %>><%= s %></option>
+            <% }) %>
+          </select>
+          <button type="submit" class="btn btn-sm">Terapkan</button>
+          <a class="btn-ghost btn-sm" href="/dashboard">Reset</a>
+        </form>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr><th>ID</th><th>Ref</th><th>Status</th><th>Nominal</th><th>Dibayar</th><th>Webhook</th></tr>
+          </thead>
+          <tbody>
+            <% if (txns.data.length === 0) { %>
+              <tr><td colspan="6" class="empty">Belum ada transaksi. Transaksi yang dibuat akan muncul di sini.</td></tr>
+            <% } %>
+            <% txns.data.forEach(function (t) { %>
+              <tr>
+                <td class="small mono"><%= t.id %></td>
+                <td><%= t.ref_id %></td>
+                <td><span class="badge <%= t.status %>"><%= t.status %></span></td>
+                <td class="mono"><%= t.actual_amount.toLocaleString('id-ID') %></td>
+                <td class="small"><%= t.paid_at ? new Date(t.paid_at).toLocaleString('id-ID') : '-' %></td>
+                <td class="small"><%= t.webhook_status %> (<%= t.webhook_attempts %>x)<% if (t.webhook_last_error) { %><br /><span class="muted"><%= t.webhook_last_error %></span><% } %></td>
+              </tr>
+            <% }) %>
+          </tbody>
+        </table>
+        <% if (txns.total_pages > 1) { %>
+          <div class="pagination">
+            <% var page = txns.page; var pages = txns.total_pages; %>
+            <% for (var p = 1; p <= pages; p++) { %>
+              <a class="page-link <%= p === page ? 'current' : '' %>" href="/dashboard?page=<%= p %><%= filters.status ? '&status=' + encodeURIComponent(filters.status) : '' %>"><%= p %></a>
+            <% } %>
+          </div>
+        <% } %>
+      </div>
+    </section>
+
+    <!-- ================= Orphan ================= -->
+    <section class="card tab-panel" data-panel="orphans" hidden>
+      <div class="section-head"><h2>Pembayaran Tak Teridentifikasi</h2></div>
+      <p class="muted small">Pembayaran yang masuk tapi tidak cocok dengan transaksi mana pun.</p>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr><th>#</th><th>Nominal</th><th>Sumber</th><th>Referensi</th><th>Diterima</th></tr>
+          </thead>
+          <tbody>
+            <% if (orphans.data.length === 0) { %>
+              <tr><td colspan="5" class="empty">Tidak ada pembayaran tak teridentifikasi.</td></tr>
+            <% } %>
+            <% orphans.data.forEach(function (o) { %>
+              <tr>
+                <td class="small"><%= o.id %></td>
+                <td class="mono"><%= o.amount.toLocaleString('id-ID') %></td>
+                <td class="small"><%= o.source || '-' %></td>
+                <td class="small"><%= o.reference || '-' %></td>
+                <td class="small"><%= new Date(o.received_at).toLocaleString('id-ID') %></td>
+              </tr>
+            <% }) %>
+          </tbody>
+        </table>
+      </div>
+    </section>
+  </div>
+</main>
+
+<!-- ================= Overlay: Ajukan Channel Sendiri ================= -->
+<div id="channel-modal" class="modal-overlay" hidden>
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="channel-modal-title">
+    <div class="modal-head">
+      <h3 id="channel-modal-title">Ajukan Channel Sendiri</h3>
+      <button class="icon-btn" type="button" data-close-modal aria-label="Tutup">✕</button>
+    </div>
+    <p class="muted small">Pengajuan perlu disetujui admin sebelum bisa dipakai.</p>
+
+    <h3>QRIS Sendiri</h3>
+    <form id="qris-request-form" class="form-grid">
+      <div>
+        <label for="mq-name">Nama</label>
+        <input id="mq-name" name="name" required />
+      </div>
+      <div>
+        <label for="mq-static">QRIS statis</label>
+        <textarea id="mq-static" name="qris_static" rows="3" required></textarea>
+      </div>
+      <div class="form-actions"><button type="submit" class="btn btn-primary">Ajukan QRIS</button></div>
+    </form>
+
+    <h3>Aplikasi PayHook Sendiri</h3>
+    <form id="payhook-request-form" class="form-grid">
+      <div>
+        <label for="mp-name">Nama (mis. HP Toko Saya)</label>
+        <input id="mp-name" name="name" required />
+      </div>
+      <div class="form-actions"><button type="submit" class="btn btn-primary">Ajukan PayHook</button></div>
+    </form>
+  </div>
+</div>
+
+<script type="application/json" id="chart-data">
+<%- JSON.stringify({
+  statusDonut: stats.statusDist,
+  saldoLine: stats.saldoSeries
+}) %>
+</script>
+<script src="/admin/dashboard.js"></script>
+</body>
+</html>

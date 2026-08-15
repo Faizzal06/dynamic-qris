@@ -8,11 +8,14 @@ const { createQrisConverter } = require('./services/qrisConverter');
 const { createWebhookSender } = require('./services/webhookSender');
 const { createMerchantService } = require('./services/merchantService');
 const { createUserService } = require('./services/userService');
+const { createQrisAccountService } = require('./services/qrisAccountService');
+const { createPayhookAppService } = require('./services/payhookAppService');
 const { createMerchantRouter } = require('./routes/merchant');
 const { createInternalRouter } = require('./routes/internal');
 const { createAuthRouter } = require('./routes/auth');
 const { createAdminRouter } = require('./routes/admin');
 const { createDashboardRouter } = require('./routes/dashboard');
+const { createPageRouter } = require('./routes/pages');
 const { createRateLimiter } = require('./middleware/rateLimit');
 const { notFoundHandler, errorHandler } = require('./middleware/errorHandler');
 
@@ -20,7 +23,9 @@ function createApp({ db, config }) {
   const uniqueAmount = createUniqueAmount(db);
   const qrisConverter = createQrisConverter(config);
   const webhookSender = createWebhookSender(db, config);
-  const transactionService = createTransactionService(db, config, uniqueAmount, qrisConverter, webhookSender);
+  const qrisAccountService = createQrisAccountService(db);
+  const payhookAppService = createPayhookAppService(db);
+  const transactionService = createTransactionService(db, config, uniqueAmount, qrisConverter, webhookSender, qrisAccountService);
   const merchantService = createMerchantService(db);
   const userService = createUserService(db);
   const rateLimiter = createRateLimiter({
@@ -31,6 +36,8 @@ function createApp({ db, config }) {
   const app = express();
   app.disable('x-powered-by');
   app.set('trust proxy', 1);
+  app.set('view engine', 'ejs');
+  app.set('views', path.join(__dirname, 'views'));
   app.use(express.json({ limit: '100kb' }));
 
   // Health check
@@ -57,11 +64,16 @@ function createApp({ db, config }) {
   app.use('/auth', createAuthRouter({ db, config, userService, rateLimiter }));
 
   // API admin & merchant dashboard
-  app.use('/admin/api', createAdminRouter({ db, config, merchantService, userService, transactionService }));
-  app.use('/dashboard/api', createDashboardRouter({ db, config, merchantService, userService, transactionService }));
+  app.use('/admin/api', createAdminRouter({ db, config, merchantService, userService, transactionService, qrisAccountService, payhookAppService }));
+  app.use('/dashboard/api', createDashboardRouter({ db, config, merchantService, userService, transactionService, qrisAccountService, payhookAppService, webhookSender }));
 
-  // Dashboard UI statis (express.static otomatis menyajikan index.html untuk /admin/)
-  app.use('/admin', express.static(path.join(__dirname, 'admin')));
+  // Halaman EJS (login, dashboard admin & merchant) — dirender server-side
+  app.use(
+    createPageRouter({ db, config, merchantService, qrisAccountService, payhookAppService, transactionService })
+  );
+
+  // Asset statis dashboard (style.css, dashboard.js, login.js)
+  app.use('/admin', express.static(path.join(__dirname, 'admin'), { index: false }));
 
   app.use(notFoundHandler);
   app.use(errorHandler);
@@ -72,6 +84,8 @@ function createApp({ db, config }) {
     webhookSender,
     merchantService,
     userService,
+    qrisAccountService,
+    payhookAppService,
   };
 }
 

@@ -59,19 +59,27 @@ async function main() {
   };
 
   const db = openDatabase(config.dbPath);
-  const { app, merchantService, userService } = createApp({ db, config });
+  const { app, merchantService, userService, qrisAccountService, payhookAppService } = createApp({ db, config });
 
-  // Seed admin + merchant untuk smoke test
+  // Seed admin + pool QRIS/PayHook admin + merchant untuk smoke test
   await userService.createUser({ role: 'admin', username: 'admin', password: 'admin123' });
+
+  const adminQris = qrisAccountService.createQrisAccount({
+    name: 'QRIS Smoke',
+    qris_static: QRIS_STATIC,
+    owner_type: 'admin',
+  });
+  const adminPayhook = payhookAppService.createPayhookApp({ name: 'PayHook Smoke', owner_type: 'admin' });
 
   const merchant = merchantService.createMerchant({
     name: 'Smoke Merchant',
-    qris_static: QRIS_STATIC,
     webhook_url: 'http://127.0.0.1:1/webhook', // port 1 = selalu gagal (simulasi)
     webhook_secret: 'whsec_test',
   });
+  qrisAccountService.selectForMerchant(merchant.id, adminQris.id);
+  payhookAppService.selectForMerchant(merchant.id, adminPayhook.id);
   const apiKey = merchant.api_key;
-  const payhookToken = merchant.payhook_token;
+  const payhookToken = adminPayhook.token;
 
   const server = await new Promise((resolve) => {
     const s = app.listen(0, '127.0.0.1', () => resolve(s));

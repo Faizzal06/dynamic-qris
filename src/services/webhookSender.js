@@ -115,7 +115,56 @@ function createWebhookSender(db, config) {
     return updateAfterAttempt(txn, attempts, false, errorMsg);
   }
 
-  return { send, sign, buildPayload };
+  /**
+   * Kirim webhook uji (event `webhook.test`) — tidak menyentuh tabel transactions.
+   * Dipakai merchant untuk memverifikasi URL & signature webhook setelah diubah/di-rotate.
+   * @param {object} merchant merchant aktif (punya webhook_url & webhook_secret)
+   * @param {{event?: string, reason?: string}} [opts]
+   * @returns {Promise<{ok: boolean, status?: number, error?: string}>}
+   */
+  async function sendTest(merchant, opts = {}) {
+    const callbackUrl = merchant.webhook_url;
+    if (!callbackUrl) {
+      return { ok: false, error: 'webhook_url kosong' };
+    }
+    const event = opts.event || 'webhook.test';
+    const payload = {
+      event,
+      test: true,
+      merchant_id: merchant.id,
+      merchant_name: merchant.name,
+      reason: opts.reason || 'konfigurasi webhook diubah',
+      sent_at: new Date().toISOString(),
+    };
+    const rawBody = JSON.stringify(payload);
+
+    let res;
+    try {
+      res = await fetch(callbackUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Signature': sign(rawBody, merchant.webhook_secret),
+          'X-Event': event,
+        },
+        body: rawBody,
+        signal: AbortSignal.timeout(config.webhookTimeoutMs),
+      });
+    } catch (err) {
+      const errorMsg = err.name === 'TimeoutError' || err.name === 'AbortError' ? 'timeout' : err.message;
+      logger.warn(`[webhook-test] gagal ke ${callbackUrl}: ${errorMsg}`);
+      return { ok: false, error: errorMsg };
+    }
+    await res.text().catch(() => {});
+    if (res.ok) {
+      logger.info(`[webhook-test] terkirim ke ${callbackUrl} (${event})`);
+      return { ok: true, status: res.status };
+    }
+    logger.warn(`[webhook-test] gagal ke ${callbackUrl}: HTTP ${res.status}`);
+    return { ok: false, error: `HTTP ${res.status}` };
+  }
+
+  return { send, sendTest, sign, buildPayload };
 }
 
 module.exports = { createWebhookSender };
