@@ -177,6 +177,9 @@ const ACTION_URLS = {
   'txn-expire': { method: 'POST', url: (id) => `/admin/api/transactions/${id}/expire` },
   'txn-refund': { method: 'POST', url: (id) => `/admin/api/transactions/${id}/refund`, confirm: 'Kembalikan dana transaksi ini? Status jadi refunded dan merchant dinotifikasi.' },
   'txn-resend': { method: 'POST', url: (id) => `/admin/api/transactions/${id}/resend-webhook` },
+  'txn-mark-paid': { method: 'POST', url: (id) => `/admin/api/transactions/${id}/mark-paid`, confirm: 'Tandai transaksi ini dibayar manual? Saldo merchant & fee dihitung, lalu webhook dikirim ke merchant.' },
+  'txn-mark-failed': { method: 'POST', url: (id) => `/admin/api/transactions/${id}/mark-failed`, confirm: 'Tandai transaksi ini gagal?' },
+  'txn-reopen': { method: 'POST', url: (id) => `/admin/api/transactions/${id}/reopen`, confirm: 'Buka kembali transaksi ini ke status pending? Data pembayaran akan direset.' },
   // Merchant — konfigurasi
   'dash-rotate-key': { method: 'POST', url: () => '/dashboard/api/rotate-api-key', confirm: 'Buat API key baru? Key lama langsung tidak berlaku.', alert: (json) => `API key baru: ${json.api_key}` },
   'dash-rotate-webhook-secret': {

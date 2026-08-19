@@ -264,6 +264,24 @@ function createAdminRouter({ db, config, merchantService, userService, transacti
     res.json({ transaction: toTxnResponse(txn), queued: true });
   });
 
+  router.post('/transactions/:id/mark-paid', (req, res) => {
+    const result = transactionService.markPaid(req.params.id);
+    if (!result) return res.status(404).json({ error: { code: 'not_found', message: 'Transaksi tidak ditemukan' } });
+    res.json({ transaction: toTxnResponse(result.transaction), changed: result.changed });
+  });
+
+  router.post('/transactions/:id/mark-failed', (req, res) => {
+    const result = transactionService.markFailed(req.params.id);
+    if (!result) return res.status(404).json({ error: { code: 'not_found', message: 'Transaksi tidak ditemukan' } });
+    res.json({ transaction: toTxnResponse(result.transaction), changed: result.changed });
+  });
+
+  router.post('/transactions/:id/reopen', (req, res) => {
+    const result = transactionService.reopen(req.params.id);
+    if (!result) return res.status(404).json({ error: { code: 'not_found', message: 'Transaksi tidak ditemukan' } });
+    res.json({ transaction: toTxnResponse(result.transaction), changed: result.changed });
+  });
+
   // ===== Orphan payments =====
 
   router.get('/orphans', (req, res) => {

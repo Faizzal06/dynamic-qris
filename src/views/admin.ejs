@@ -324,7 +324,7 @@
             <% }) %>
           </select>
           <button type="submit" class="btn btn-sm">Terapkan</button>
-          <a class="btn-ghost btn-sm" href="/admin">Reset</a>
+          <a class="btn-ghost btn-sm" href="/admin?panel=transactions">Reset</a>
         </form>
       </div>
       <div class="table-wrap">
@@ -347,11 +347,17 @@
                 <td class="small"><%= t.webhook_status %> (<%= t.webhook_attempts %>x)</td>
                 <td class="actions">
                   <% if (t.status === 'pending') { %>
+                    <button class="btn btn-sm" type="button" data-action="txn-mark-paid" data-id="<%= t.id %>">Tandai Dibayar</button>
+                    <button class="btn-ghost btn-sm" type="button" data-action="txn-mark-failed" data-id="<%= t.id %>">Tandai Gagal</button>
                     <button class="btn-ghost btn-sm" type="button" data-action="txn-expire" data-id="<%= t.id %>">Kadaluarsakan</button>
                   <% } %>
                   <% if (t.status === 'paid') { %>
                     <button class="btn-ghost btn-sm" type="button" data-action="txn-refund" data-id="<%= t.id %>">Kembalikan Dana</button>
                     <button class="btn-ghost btn-sm" type="button" data-action="txn-resend" data-id="<%= t.id %>">Kirim Ulang Webhook</button>
+                    <button class="btn-ghost btn-sm" type="button" data-action="txn-reopen" data-id="<%= t.id %>">Buka Kembali</button>
+                  <% } %>
+                  <% if (t.status === 'expired' || t.status === 'refunded' || t.status === 'failed') { %>
+                    <button class="btn-ghost btn-sm" type="button" data-action="txn-reopen" data-id="<%= t.id %>">Buka Kembali</button>
                   <% } %>
                 </td>
               </tr>
@@ -362,7 +368,7 @@
           <div class="pagination">
             <% var page = txns.page; var pages = txns.total_pages; %>
             <% for (var p = 1; p <= pages; p++) { %>
-              <a class="page-link <%= p === page ? 'current' : '' %>" href="/admin?page=<%= p %><%= filters.merchantId ? '&merchant_id=' + encodeURIComponent(filters.merchantId) : '' %><%= filters.status ? '&status=' + encodeURIComponent(filters.status) : '' %>"><%= p %></a>
+              <a class="page-link <%= p === page ? 'current' : '' %>" href="/admin?panel=transactions&page=<%= p %><%= filters.merchantId ? '&merchant_id=' + encodeURIComponent(filters.merchantId) : '' %><%= filters.status ? '&status=' + encodeURIComponent(filters.status) : '' %>"><%= p %></a>
             <% } %>
           </div>
         <% } %>

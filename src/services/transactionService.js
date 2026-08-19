@@ -157,6 +157,22 @@ function createTransactionService(db, config, uniqueAmount, qrisConverter, webho
   }
 
   /**
+   * Hitung pembagian saldo saat pembayaran (snapshot pemilik QRIS saat itu):
+   * - QRIS admin (pool): kode unik (actual - requested) jadi fee admin, saldo merchant = requested_amount
+   * - QRIS milik merchant sendiri: saldo merchant = actual_amount (full), fee admin 0
+   */
+  function computeCreditAndFee(txn) {
+    const qrisOwner = txn.qris_account_id
+      ? db.prepare('SELECT owner_type FROM qris_accounts WHERE id = ?').get(txn.qris_account_id)
+      : null;
+    const isAdminQris = !!qrisOwner && qrisOwner.owner_type === 'admin';
+    return {
+      merchantCredit: isAdminQris ? txn.requested_amount : txn.actual_amount,
+      adminFee: isAdminQris ? txn.actual_amount - txn.requested_amount : 0,
+    };
+  }
+
+  /**
    * Proses notifikasi PayHook.
    * @param {object} payhookApp aplikasi PayHook (dari token) — bisa dipakai banyak merchant
    */
@@ -215,15 +231,7 @@ function createTransactionService(db, config, uniqueAmount, qrisConverter, webho
       return { matched: false, reason: 'app_not_assigned' };
     }
 
-    // Hitung pembagian saldo saat pembayaran (snapshot pemilik QRIS saat itu):
-    // - QRIS admin (pool): kode unik (actual - requested) jadi fee admin, saldo merchant = requested_amount
-    // - QRIS milik merchant sendiri: saldo merchant = actual_amount (full), fee admin 0
-    const qrisOwner = pending.qris_account_id
-      ? db.prepare('SELECT owner_type FROM qris_accounts WHERE id = ?').get(pending.qris_account_id)
-      : null;
-    const isAdminQris = !!qrisOwner && qrisOwner.owner_type === 'admin';
-    const merchantCredit = isAdminQris ? pending.requested_amount : pending.actual_amount;
-    const adminFee = isAdminQris ? pending.actual_amount - pending.requested_amount : 0;
+    const { merchantCredit, adminFee } = computeCreditAndFee(pending);
 
     db.prepare(
       `UPDATE transactions
@@ -565,6 +573,94 @@ function createTransactionService(db, config, uniqueAmount, qrisConverter, webho
     return txn;
   }
 
+  /**
+   * Tandai transaksi pending sebagai dibayar manual (admin).
+   * Dipakai saat notifikasi PayHook tidak masuk/gagal terdeteksi oleh notif listener.
+   */
+  function markPaid(id) {
+    const txn = db.prepare('SELECT * FROM transactions WHERE id = ?').get(id);
+    if (!txn) return null;
+    if (txn.status !== 'pending') return { transaction: txn, changed: false };
+
+    const { merchantCredit, adminFee } = computeCreditAndFee(txn);
+    const nowIso = new Date().toISOString();
+    db.prepare(
+      `UPDATE transactions
+       SET status = 'paid', paid_at = ?, paid_source = 'manual', paid_reference = NULL, payhook_event_id = NULL,
+           merchant_credit = ?, admin_fee = ?
+       WHERE id = ?`
+    ).run(nowIso, merchantCredit, adminFee, id);
+
+    const paidTxn = {
+      ...txn,
+      status: 'paid',
+      paid_at: nowIso,
+      paid_source: 'manual',
+      paid_reference: null,
+      payhook_event_id: null,
+      merchant_credit: merchantCredit,
+      admin_fee: adminFee,
+    };
+    logger.info(`[admin] transaksi ${id} ditandai dibayar manual kredit=${merchantCredit} fee=${adminFee}`);
+
+    webhookSender.send(paidTxn).catch((err) =>
+      logger.error(`[webhook] error mark-paid tidak terduga: ${err.message}`)
+    );
+
+    return { transaction: paidTxn, changed: true };
+  }
+
+  /** Tandai transaksi pending sebagai gagal manual (admin). */
+  function markFailed(id) {
+    const txn = db.prepare('SELECT * FROM transactions WHERE id = ?').get(id);
+    if (!txn) return null;
+    if (txn.status !== 'pending') return { transaction: txn, changed: false };
+    db.prepare(`UPDATE transactions SET status = 'failed' WHERE id = ?`).run(id);
+    const updated = { ...txn, status: 'failed' };
+    logger.info(`[admin] transaksi ${id} ditandai gagal manual`);
+    return { transaction: updated, changed: true };
+  }
+
+  /**
+   * Kembalikan transaksi non-pending ke status pending (undo aksi admin / koreksi salah tandai).
+   * extends expires_at agar transaksi bisa dibayar lagi.
+   */
+  function reopen(id) {
+    const txn = db.prepare('SELECT * FROM transactions WHERE id = ?').get(id);
+    if (!txn) return null;
+    const reopenable = new Set(['paid', 'refunded', 'expired', 'failed']);
+    if (!reopenable.has(txn.status)) return { transaction: txn, changed: false };
+
+    const expiresAt = new Date(Date.now() + config.defaultExpiryMinutes * 60_000).toISOString();
+    db.prepare(
+      `UPDATE transactions
+       SET status = 'pending', paid_at = NULL, paid_source = NULL, paid_reference = NULL, payhook_event_id = NULL,
+           refunded_at = NULL, merchant_credit = 0, admin_fee = 0,
+           webhook_status = 'pending', webhook_attempts = 0, webhook_next_retry_at = NULL, webhook_last_error = NULL,
+           expires_at = ?
+       WHERE id = ?`
+    ).run(expiresAt, id);
+
+    const updated = {
+      ...txn,
+      status: 'pending',
+      paid_at: null,
+      paid_source: null,
+      paid_reference: null,
+      payhook_event_id: null,
+      refunded_at: null,
+      merchant_credit: 0,
+      admin_fee: 0,
+      webhook_status: 'pending',
+      webhook_attempts: 0,
+      webhook_next_retry_at: null,
+      webhook_last_error: null,
+      expires_at: expiresAt,
+    };
+    logger.info(`[admin] transaksi ${id} dibuka kembali ke pending`);
+    return { transaction: updated, changed: true };
+  }
+
   return {
     createTransaction,
     getTransaction,
@@ -579,6 +675,9 @@ function createTransactionService(db, config, uniqueAmount, qrisConverter, webho
     forceExpire,
     refund,
     resendWebhook,
+    markPaid,
+    markFailed,
+    reopen,
   };
 }
 
