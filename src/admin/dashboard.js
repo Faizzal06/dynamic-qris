@@ -180,6 +180,17 @@ const ACTION_URLS = {
   'txn-mark-paid': { method: 'POST', url: (id) => `/admin/api/transactions/${id}/mark-paid`, confirm: 'Tandai transaksi ini dibayar manual? Saldo merchant & fee dihitung, lalu webhook dikirim ke merchant.' },
   'txn-mark-failed': { method: 'POST', url: (id) => `/admin/api/transactions/${id}/mark-failed`, confirm: 'Tandai transaksi ini gagal?' },
   'txn-reopen': { method: 'POST', url: (id) => `/admin/api/transactions/${id}/reopen`, confirm: 'Buka kembali transaksi ini ke status pending? Data pembayaran akan direset.' },
+  // Admin — withdraw (diproses manual)
+  'withdraw-paid': {
+    method: 'POST',
+    url: (id) => `/admin/api/withdrawals/${id}/paid`,
+    confirm: 'Tandai withdraw ini sudah dibayar? Pastikan dana sudah ditransfer manual ke rekening merchant.',
+  },
+  'withdraw-reject': {
+    method: 'POST',
+    url: (id) => `/admin/api/withdrawals/${id}/reject`,
+    confirm: 'Tolak pengajuan withdraw ini? Nominal akan kembali tersedia ke saldo merchant.',
+  },
   // Merchant — konfigurasi
   'dash-rotate-key': { method: 'POST', url: () => '/dashboard/api/rotate-api-key', confirm: 'Buat API key baru? Key lama langsung tidak berlaku.', alert: (json) => `API key baru: ${json.api_key}` },
   'dash-rotate-webhook-secret': {
@@ -266,6 +277,16 @@ const FORMS = {
   },
   'qris-create-form': { url: '/admin/api/qris-accounts' },
   'payhook-create-form': { url: '/admin/api/payhook-apps' },
+  'withdraw-request-form': {
+    url: '/dashboard/api/withdrawals',
+    success: 'Pengajuan withdraw terkirim. Menunggu diproses admin.',
+    // FormData mengirim string; server memvalidasi amount harus integer.
+    build: (data) => ({ ...data, amount: Number(data.amount) }),
+    validate: (data) => {
+      if (!Number.isInteger(data.amount) || data.amount <= 0) return 'Nominal harus angka bulat positif.';
+      return null;
+    },
+  },
   'qris-request-form': { url: '/dashboard/api/qris/request', success: 'Pengajuan QRIS terkirim. Tunggu persetujuan admin.' },
   'payhook-request-form': { url: '/dashboard/api/payhook/request', success: (json) => `Pengajuan PayHook terkirim. Setelah disetujui, gunakan token: ${json.payhook_app.token}` },
   'dash-webhook-form': {
@@ -310,12 +331,13 @@ function initForms() {
 
 function initFormToggles() {
   document.addEventListener('click', (e) => {
-    const showBtn = e.target.closest('#btn-new-merchant, #btn-new-qris, #btn-new-payhook, [data-show]');
+    const showBtn = e.target.closest('#btn-new-merchant, #btn-new-qris, #btn-new-payhook, #btn-new-withdrawal, [data-show]');
     if (showBtn) {
       const map = {
         'btn-new-merchant': 'merchant-create-wrap',
         'btn-new-qris': 'qris-create-wrap',
         'btn-new-payhook': 'payhook-create-wrap',
+        'btn-new-withdrawal': 'withdraw-create-wrap',
       };
       const wrap = document.getElementById(showBtn.dataset.show || map[showBtn.id]);
       if (wrap) wrap.classList.remove('hidden');

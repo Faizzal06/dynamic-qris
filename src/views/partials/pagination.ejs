@@ -1,0 +1,81 @@
+<%
+/*
+  Pagination reusable.
+  Props:
+    page      - halaman aktif (number)
+    pages     - total halaman (number)
+    baseUrl   - path tujuan, mis. '/admin' atau '/dashboard'
+    panel     - nilai query 'panel' agar panel tetap aktif
+    params    - objek query filter yang harus ikut dipertahankan
+    pageParam - nama query untuk halaman (default 'page')
+    label     - teks helper, mis. 'transaksi' (default 'baris')
+*/
+var _pageParam = typeof pageParam !== 'undefined' && pageParam ? pageParam : 'page';
+var _params = typeof params !== 'undefined' && params ? params : {};
+var _pages = Math.max(Number(pages) || 1, 1);
+var _page = Math.min(Math.max(Number(page) || 1, 1), _pages);
+var _label = typeof label !== 'undefined' && label ? label : 'baris';
+var _window = 5;
+
+var _keys = Object.keys(_params).filter(function (k) {
+  return _params[k] !== '' && _params[k] !== null && _params[k] !== undefined;
+});
+var _qs = _keys.map(function (k) {
+  return k + '=' + encodeURIComponent(_params[k]);
+});
+
+function _url(p) {
+  var q = _qs.concat([_pageParam + '=' + p]);
+  return baseUrl + '?' + q.join('&');
+}
+
+var _start = Math.max(1, Math.min(_page - Math.floor(_window / 2), _pages - _window + 1));
+var _end = Math.min(_pages, _start + _window - 1);
+var _inputId = 'page-jump-' + _pageParam + '-' + (panel || 'x');
+%>
+<% if (_pages > 1) { %>
+  <nav class="pagination" aria-label="Pagination <%= _label %>">
+    <div class="page-links">
+      <% if (_page > 1) { %>
+        <a class="page-link" href="<%= _url(1) %>" aria-label="Halaman pertama" title="Halaman pertama">&laquo;</a>
+        <a class="page-link" href="<%= _url(_page - 1) %>" aria-label="Halaman sebelumnya" title="Halaman sebelumnya">&lsaquo;</a>
+      <% } else { %>
+        <span class="page-link disabled" aria-hidden="true">&laquo;</span>
+        <span class="page-link disabled" aria-hidden="true">&lsaquo;</span>
+      <% } %>
+
+      <% if (_start > 1) { %>
+        <a class="page-link" href="<%= _url(1) %>">1</a>
+        <% if (_start > 2) { %><span class="page-ellipsis">&hellip;</span><% } %>
+      <% } %>
+
+      <% for (var p = _start; p <= _end; p++) { %>
+        <a class="page-link <%= p === _page ? 'current' : '' %>" href="<%= _url(p) %>"<%- p === _page ? ' aria-current="page"' : '' %>><%= p %></a>
+      <% } %>
+
+      <% if (_end < _pages) { %>
+        <% if (_end < _pages - 1) { %><span class="page-ellipsis">&hellip;</span><% } %>
+        <a class="page-link" href="<%= _url(_pages) %>"><%= _pages %></a>
+      <% } %>
+
+      <% if (_page < _pages) { %>
+        <a class="page-link" href="<%= _url(_page + 1) %>" aria-label="Halaman berikutnya" title="Halaman berikutnya">&rsaquo;</a>
+        <a class="page-link" href="<%= _url(_pages) %>" aria-label="Halaman terakhir" title="Halaman terakhir">&raquo;</a>
+      <% } else { %>
+        <span class="page-link disabled" aria-hidden="true">&rsaquo;</span>
+        <span class="page-link disabled" aria-hidden="true">&raquo;</span>
+      <% } %>
+    </div>
+
+    <form class="page-jump" method="get" action="<%= baseUrl %>">
+      <input type="hidden" name="panel" value="<%= panel %>" />
+      <% _keys.forEach(function (k) { %>
+        <input type="hidden" name="<%= k %>" value="<%= _params[k] %>" />
+      <% }); %>
+      <label for="<%= _inputId %>">Halaman</label>
+      <input type="number" id="<%= _inputId %>" name="<%= _pageParam %>" min="1" max="<%= _pages %>" value="<%= _page %>" required />
+      <button type="submit" class="btn-ghost btn-sm">Go</button>
+      <span class="muted small">dari <%= _pages %></span>
+    </form>
+  </nav>
+<% } %>

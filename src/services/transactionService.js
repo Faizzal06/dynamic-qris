@@ -6,6 +6,8 @@ const logger = require('../utils/logger');
 
 const URL_REGEX = /^https?:\/\/.+/i;
 
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun', 'Jul', 'Agu', 'Sep', 'Okt', 'Nov', 'Des'];
+
 function createTransactionService(db, config, uniqueAmount, qrisConverter, webhookSender, qrisAccountService) {
   function validateCreateInput(input) {
     if (!input || typeof input !== 'object') {
@@ -273,16 +275,21 @@ function createTransactionService(db, config, uniqueAmount, qrisConverter, webho
     return { saldo: row.saldo, paid_count: row.paid_count };
   }
 
-  /** Ringkasan penghasilan admin: total fee kode unik + breakdown per merchant. */
+  /**
+   * Ringkasan penghasilan admin untuk 7 hari terakhir: total fee kode unik +
+   * breakdown per merchant. Termasuk ringkasan hari ini (transaksi paid + fee).
+   */
   function getAdminIncomeSummary() {
+    const { startIso, endIso } = last7AndPrior7();
+
     const total = db
       .prepare(
         `SELECT COALESCE(SUM(admin_fee), 0) AS total_fee,
                 COALESCE(SUM(merchant_credit), 0) AS total_merchant_credit,
                 COUNT(*) AS paid_count
-         FROM transactions WHERE status = 'paid'`
+         FROM transactions WHERE status = 'paid' AND paid_at >= ? AND paid_at < ?`
       )
-      .get();
+      .get(startIso, endIso);
 
     const perMerchant = db
       .prepare(
@@ -292,13 +299,13 @@ function createTransactionService(db, config, uniqueAmount, qrisConverter, webho
                 COUNT(*) AS paid_count
          FROM transactions t
          JOIN merchants m ON m.id = t.merchant_id
-         WHERE t.status = 'paid'
+         WHERE t.status = 'paid' AND t.paid_at >= ? AND t.paid_at < ?
          GROUP BY m.id, m.name
          ORDER BY fee DESC, m.name ASC`
       )
-      .all();
+      .all(startIso, endIso);
 
-    return { ...total, per_merchant: perMerchant };
+    return { ...total, per_merchant: perMerchant, today: todaySummary() };
   }
 
   // ===== Query untuk dashboard (admin) & dashboard merchant =====
@@ -364,7 +371,7 @@ function createTransactionService(db, config, uniqueAmount, qrisConverter, webho
   // ===== Statistik & chart untuk dashboard =====
 
   /** Bagikan { label, value } dari kolom tertentu transaksi paid (untuk donut). */
-  function distributionOf(column, where = 'status = \'paid\'') {
+  function distributionOf(column, { where = "status = 'paid'", params = [] } = {}) {
     const allowed = ['paid_source', 'qris_account_id'];
     if (!allowed.includes(column)) throw new Error(`kolom tidak diizinkan: ${column}`);
     const rows = db
@@ -372,7 +379,7 @@ function createTransactionService(db, config, uniqueAmount, qrisConverter, webho
         `SELECT COALESCE(NULLIF(${column}, ''), 'Lainnya') AS label, COUNT(*) AS value
          FROM transactions WHERE ${where} GROUP BY label ORDER BY value DESC`
       )
-      .all();
+      .all(...params);
     return rows.map((r) => ({ label: r.label, value: r.value }));
   }
 
@@ -405,37 +412,78 @@ function createTransactionService(db, config, uniqueAmount, qrisConverter, webho
       d.setDate(d.getDate() - i);
       days.unshift(d);
     }
+    // Awal periode berjalan = midnight hari ke-7 terakhir
     const start = new Date(days[0]);
     start.setHours(0, 0, 0, 0);
-    const priorEnd = new Date(start);
-    const priorStart = new Date(priorEnd);
+    // Akhir periode berjalan = akhir hari ini (days[6] sudah 23:59:59.999)
+    const end = new Date(days[6]);
+    // Awal periode pembanding = 7 hari sebelum start
+    const priorStart = new Date(start);
     priorStart.setDate(priorStart.getDate() - 7);
-    return { days, startIso: start.toISOString(), priorStartIso: priorStart.toISOString(), priorEndIso: priorEnd.toISOString() };
+    return {
+      days,
+      startIso: start.toISOString(),
+      endIso: end.toISOString(),
+      priorStartIso: priorStart.toISOString(),
+    };
+  }
+
+  /**
+   * Ringkasan transaksi hari ini (paid): jumlah transaksi + fee + saldo merchant.
+   * Batas hari mengikuti zona waktu lokal server agar cocok dengan label grafik harian.
+   */
+  function todaySummary(merchantId = null) {
+    const start = new Date();
+    start.setHours(0, 0, 0, 0);
+    const end = new Date(start);
+    end.setDate(end.getDate() + 1);
+    const startIso = start.toISOString();
+    const endIso = end.toISOString();
+
+    const row = merchantId
+      ? db
+          .prepare(
+            `SELECT COUNT(*) AS paid_today,
+                    COALESCE(SUM(admin_fee), 0) AS fee_today,
+                    COALESCE(SUM(merchant_credit), 0) AS credit_today
+             FROM transactions
+             WHERE status = 'paid' AND merchant_id = ? AND paid_at >= ? AND paid_at < ?`
+          )
+          .get(merchantId, startIso, endIso)
+      : db
+          .prepare(
+            `SELECT COUNT(*) AS paid_today,
+                    COALESCE(SUM(admin_fee), 0) AS fee_today,
+                    COALESCE(SUM(merchant_credit), 0) AS credit_today
+             FROM transactions
+             WHERE status = 'paid' AND paid_at >= ? AND paid_at < ?`
+          )
+          .get(startIso, endIso);
+
+    return row;
   }
 
   /** Statistik dashboard admin (donut, line, general, top merchant). */
   function getAdminDashboardStats() {
-    const { days, startIso, priorStartIso, priorEndIso } = last7AndPrior7();
+    const { days, startIso, endIso, priorStartIso } = last7AndPrior7();
 
-    const series = dailySeries('admin_fee', startIso, new Date(days[6]).toISOString());
+    const series = dailySeries('admin_fee', startIso, endIso);
     const seriesMap = new Map(series.map((r) => [r.day, r.value]));
 
-    const totals = db
+    // Total periode berjalan (7 hari terakhir, termasuk hari ini)
+    const periodTotals = db
       .prepare(
         `SELECT COALESCE(SUM(admin_fee), 0) AS fee,
                 COALESCE(SUM(merchant_credit), 0) AS credit,
                 COUNT(*) AS paid_count
-         FROM transactions WHERE status = 'paid'`
-      )
-      .get();
-    const totalTxns = db.prepare('SELECT COUNT(*) AS c FROM transactions').get().c;
-
-    const periodTotals = db
-      .prepare(
-        `SELECT COALESCE(SUM(admin_fee), 0) AS fee, COALESCE(SUM(merchant_credit), 0) AS credit
          FROM transactions WHERE status = 'paid' AND paid_at >= ? AND paid_at < ?`
       )
-      .get(startIso, priorEndIso);
+      .get(startIso, endIso);
+    const totalTxns = db
+      .prepare('SELECT COUNT(*) AS c FROM transactions WHERE created_at >= ? AND created_at < ?')
+      .get(startIso, endIso).c;
+
+    // Total 7 hari sebelumnya untuk pembanding tren
     const priorTotals = db
       .prepare(
         `SELECT COALESCE(SUM(admin_fee), 0) AS fee, COALESCE(SUM(merchant_credit), 0) AS credit
@@ -450,15 +498,20 @@ function createTransactionService(db, config, uniqueAmount, qrisConverter, webho
                 COALESCE(SUM(t.admin_fee), 0) AS fee,
                 COALESCE(SUM(t.merchant_credit), 0) AS credit
          FROM transactions t JOIN merchants m ON m.id = t.merchant_id
-         WHERE t.status = 'paid'
+         WHERE t.status = 'paid' AND t.paid_at >= ? AND t.paid_at < ?
          GROUP BY m.id, m.name
          ORDER BY fee DESC, credit DESC
          LIMIT 10`
       )
-      .all();
+      .all(startIso, endIso);
+
+    const rangeLabel = `${days[0].getDate()} ${MONTHS[days[0].getMonth()]} — ${days[6].getDate()} ${MONTHS[days[6].getMonth()]} ${days[6].getFullYear()}`;
 
     return {
-      sourceDist: distributionOf('paid_source'),
+      sourceDist: distributionOf('paid_source', {
+        where: "status = 'paid' AND paid_at >= ? AND paid_at < ?",
+        params: [startIso, endIso],
+      }),
       incomeSeries: {
         labels: days.map((d) => `${d.getDate()}.${String(d.getMonth() + 1).padStart(2, '0')}`),
         data: days.map((d) => {
@@ -467,20 +520,22 @@ function createTransactionService(db, config, uniqueAmount, qrisConverter, webho
         }),
       },
       generalStats: {
-        revenue: totals.fee,
+        revenue: periodTotals.fee,
         revenueTrend: pctChange(periodTotals.fee, priorTotals.fee),
-        income: totals.credit,
+        income: periodTotals.credit,
         incomeTrend: pctChange(periodTotals.credit, priorTotals.credit),
       },
-      paidCount: totals.paid_count,
+      paidCount: periodTotals.paid_count,
       totalTxns,
       topMerchants,
+      today: todaySummary(),
+      rangeLabel,
     };
   }
 
   /** Statistik dashboard merchant (donut status, line saldo masuk, general). */
   function getMerchantDashboardStats(merchantId) {
-    const { days, startIso, priorStartIso, priorEndIso } = last7AndPrior7();
+    const { days, startIso, endIso, priorStartIso } = last7AndPrior7();
 
     // Distribusi status transaksi
     const statusDist = db
@@ -500,7 +555,7 @@ function createTransactionService(db, config, uniqueAmount, qrisConverter, webho
          WHERE status = 'paid' AND merchant_id = ? AND paid_at >= ? AND paid_at < ?
          GROUP BY day ORDER BY day ASC`
       )
-      .all(merchantId, startIso, priorEndIso);
+      .all(merchantId, startIso, endIso);
     const creditMap = new Map(creditRows.map((r) => [r.day, r.value]));
 
     const saldoSeries = {
@@ -514,11 +569,11 @@ function createTransactionService(db, config, uniqueAmount, qrisConverter, webho
     // Trendi saldo 7 hari vs 7 hari sebelumnya
     const periodTotals = db
       .prepare(
-        `SELECT COALESCE(SUM(merchant_credit), 0) AS credit
+        `SELECT COALESCE(SUM(merchant_credit), 0) AS credit, COUNT(*) AS paid_count
          FROM transactions
          WHERE status = 'paid' AND merchant_id = ? AND paid_at >= ? AND paid_at < ?`
       )
-      .get(merchantId, startIso, priorEndIso);
+      .get(merchantId, startIso, endIso);
     const priorTotals = db
       .prepare(
         `SELECT COALESCE(SUM(merchant_credit), 0) AS credit
@@ -531,8 +586,12 @@ function createTransactionService(db, config, uniqueAmount, qrisConverter, webho
       statusDist,
       saldoSeries,
       saldoTrend: pctChange(periodTotals.credit, priorTotals.credit),
+      paidCount: periodTotals.paid_count,
+      credit7d: periodTotals.credit,
+      today: todaySummary(merchantId),
+      rangeLabel: `${days[0].getDate()} ${MONTHS[days[0].getMonth()]} — ${days[6].getDate()} ${MONTHS[days[6].getMonth()]} ${days[6].getFullYear()}`,
     };
-}
+  }
 
   // ===== Aksi admin =====
 

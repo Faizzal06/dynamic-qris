@@ -4,7 +4,7 @@ const express = require('express');
 const { requireSession } = require('../middleware/session');
 const { safeParseJson } = require('../utils/serializers');
 
-function createDashboardRouter({ db, config, merchantService, userService, transactionService, qrisAccountService, payhookAppService, webhookSender }) {
+function createDashboardRouter({ db, config, merchantService, userService, transactionService, qrisAccountService, payhookAppService, webhookSender, withdrawalService }) {
   const router = express.Router();
   router.use(requireSession(db, 'merchant'));
 
@@ -171,6 +171,41 @@ function createDashboardRouter({ db, config, merchantService, userService, trans
       limit: req.query.limit,
     });
     res.json(result);
+  });
+
+  // ===== Withdraw =====
+
+  // GET /dashboard/api/withdrawals — saldo tersedia + riwayat withdraw merchant ini
+  router.get('/withdrawals', (req, res) => {
+    const merchant = currentMerchant(req);
+    if (!merchant) return res.status(404).json({ error: { code: 'not_found', message: 'Merchant tidak ditemukan' } });
+    const balance = withdrawalService.getBalance(merchant.id);
+    const list = withdrawalService.listWithdrawals({
+      merchantId: merchant.id,
+      status: req.query.status || undefined,
+      page: req.query.page,
+      limit: req.query.limit,
+    });
+    res.json({ ...list, balance, min_amount: withdrawalService.MIN_WITHDRAW_AMOUNT });
+  });
+
+  // POST /dashboard/api/withdrawals — ajukan withdraw (diproses manual oleh admin)
+  router.post('/withdrawals', (req, res, next) => {
+    try {
+      const merchant = currentMerchant(req);
+      if (!merchant) return res.status(404).json({ error: { code: 'not_found', message: 'Merchant tidak ditemukan' } });
+      const { amount, bank_name, account_number, account_name, note } = req.body || {};
+      const withdrawal = withdrawalService.requestWithdrawal(merchant, {
+        amount,
+        bank_name,
+        account_number,
+        account_name,
+        note,
+      });
+      res.status(201).json({ withdrawal, balance: withdrawalService.getBalance(merchant.id) });
+    } catch (err) {
+      next(err);
+    }
   });
 
   // PATCH /dashboard/api/webhook — ubah webhook URL merchant, lalu kirim webhook uji ke URL baru

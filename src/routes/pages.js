@@ -9,7 +9,7 @@ const { findSession } = require('../services/sessionService');
 // Dokumentasi API versi Markdown (placeholder diisi nilai config saat request)
 const API_DOCS_MD = fs.readFileSync(path.join(__dirname, '..', 'docs', 'api.md'), 'utf8');
 
-function createPageRouter({ db, config, merchantService, qrisAccountService, payhookAppService, transactionService }) {
+function createPageRouter({ db, config, merchantService, qrisAccountService, payhookAppService, transactionService, withdrawalService }) {
   const router = express.Router();
 
   function currentUser(req) {
@@ -72,10 +72,19 @@ function createPageRouter({ db, config, merchantService, qrisAccountService, pay
       page: req.query.page,
       limit: req.query.limit,
     });
-    const orphans = transactionService.listOrphanPayments({ page: req.query.page, limit: req.query.limit });
+    const orphans = transactionService.listOrphanPayments({
+      page: req.query.orphan_page,
+      limit: req.query.limit,
+    });
     const income = transactionService.getAdminIncomeSummary();
     const stats = transactionService.getAdminDashboardStats();
-    const panels = ['dashboard', 'income', 'merchants', 'channels', 'transactions', 'orphans'];
+    const withdrawals = withdrawalService.listWithdrawals({
+      status: req.query.wd_status || undefined,
+      page: req.query.wd_page,
+      limit: req.query.limit,
+    });
+    const withdrawalSummary = withdrawalService.getSummary();
+    const panels = ['dashboard', 'income', 'merchants', 'channels', 'transactions', 'orphans', 'withdrawals'];
     const activePanel = panels.includes(req.query.panel) ? req.query.panel : 'dashboard';
 
     res.render('admin', {
@@ -88,8 +97,10 @@ function createPageRouter({ db, config, merchantService, qrisAccountService, pay
       orphans,
       income,
       stats,
+      withdrawals,
+      withdrawalSummary,
       activePanel,
-      filters: { merchantId: merchantId || '', status: status || '' },
+      filters: { merchantId: merchantId || '', status: status || '', wdStatus: req.query.wd_status || '' },
     });
   });
 
@@ -128,10 +139,20 @@ function createPageRouter({ db, config, merchantService, qrisAccountService, pay
       page: req.query.page,
       limit: req.query.limit,
     });
-    const orphans = transactionService.listOrphanPayments({ merchantId: merchant.id, page: req.query.page, limit: req.query.limit });
+    const orphans = transactionService.listOrphanPayments({
+      merchantId: merchant.id,
+      page: req.query.orphan_page,
+      limit: req.query.limit,
+    });
     const saldo = transactionService.getMerchantSaldo(merchant.id);
     const stats = transactionService.getMerchantDashboardStats(merchant.id);
-    const panels = ['dashboard', 'saldo', 'config', 'channels', 'transactions', 'orphans'];
+    const withdrawalBalance = withdrawalService.getBalance(merchant.id);
+    const withdrawals = withdrawalService.listWithdrawals({
+      merchantId: merchant.id,
+      page: req.query.wd_page,
+      limit: req.query.limit,
+    });
+    const panels = ['dashboard', 'saldo', 'config', 'channels', 'transactions', 'orphans', 'withdrawals'];
     const activePanel = panels.includes(req.query.panel) ? req.query.panel : 'dashboard';
 
     res.render('merchant', {
@@ -144,6 +165,9 @@ function createPageRouter({ db, config, merchantService, qrisAccountService, pay
       orphans,
       saldo,
       stats,
+      withdrawals,
+      withdrawalBalance,
+      minWithdraw: withdrawalService.MIN_WITHDRAW_AMOUNT,
       activePanel,
       filters: { status: status || '' },
     });

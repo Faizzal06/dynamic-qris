@@ -10,31 +10,44 @@
 
     <!-- ================= Dashboard overview ================= -->
     <section class="tab-panel" data-panel="dashboard" <%= activePanel === 'dashboard' ? '' : 'hidden' %>>
+      <div class="section-head">
+        <div>
+          <h2 style="margin: 0;">Ringkasan 7 Hari Terakhir</h2>
+          <p class="muted small" style="margin: var(--space-xs) 0 0;"><%= stats.rangeLabel %></p>
+        </div>
+        <a class="btn-ghost btn-sm" href="/admin?panel=income">Rincian penghasilan</a>
+      </div>
+
       <div class="stat-grid">
         <div class="stat">
-          <span class="stat-label">Total Fee</span>
+          <span class="stat-label">Total Fee (7 hari)</span>
           <span class="stat-value">Rp <%= stats.generalStats.revenue.toLocaleString('id-ID') %></span>
           <% if (stats.generalStats.revenueTrend !== null) { %>
             <span class="trend <%= stats.generalStats.revenueTrend >= 0 ? 'up' : 'down' %>">
               <i class="fa-solid <%= stats.generalStats.revenueTrend >= 0 ? 'fa-arrow-trend-up' : 'fa-arrow-trend-down' %>"></i>
-              <%= Math.abs(stats.generalStats.revenueTrend) %>% <span class="muted small">vs 7 hari lalu</span>
+              <%= Math.abs(stats.generalStats.revenueTrend) %>% <span class="muted small">vs 7 hari sebelumnya</span>
             </span>
           <% } %>
         </div>
         <div class="stat">
-          <span class="stat-label">Income (saldo merchant)</span>
+          <span class="stat-label">Income 7 Hari (saldo merchant)</span>
           <span class="stat-value">Rp <%= stats.generalStats.income.toLocaleString('id-ID') %></span>
           <% if (stats.generalStats.incomeTrend !== null) { %>
             <span class="trend <%= stats.generalStats.incomeTrend >= 0 ? 'up' : 'down' %>">
               <i class="fa-solid <%= stats.generalStats.incomeTrend >= 0 ? 'fa-arrow-trend-up' : 'fa-arrow-trend-down' %>"></i>
-              <%= Math.abs(stats.generalStats.incomeTrend) %>% <span class="muted small">vs 7 hari lalu</span>
+              <%= Math.abs(stats.generalStats.incomeTrend) %>% <span class="muted small">vs 7 hari sebelumnya</span>
             </span>
           <% } %>
         </div>
         <div class="stat">
-          <span class="stat-label">Transaksi Dibayar</span>
+          <span class="stat-label">Transaksi Dibayar (7 hari)</span>
           <span class="stat-value"><%= stats.paidCount.toLocaleString('id-ID') %></span>
-          <span class="muted small">dari <%= stats.totalTxns.toLocaleString('id-ID') %> total</span>
+          <span class="muted small">dari <%= stats.totalTxns.toLocaleString('id-ID') %> dibuat</span>
+        </div>
+        <div class="stat stat-accent">
+          <span class="stat-label">Transaksi Hari Ini</span>
+          <span class="stat-value"><%= stats.today.paid_today.toLocaleString('id-ID') %> <span class="muted small">paid</span></span>
+          <span class="muted small">Fee <span class="mono">Rp <%= stats.today.fee_today.toLocaleString('id-ID') %></span></span>
         </div>
         <div class="stat">
           <span class="stat-label">Channel Aktif</span>
@@ -47,7 +60,7 @@
         <div class="card">
           <div class="section-head"><h3>Distribusi Pembayaran</h3></div>
           <div class="chart-wrap"><canvas id="source-donut" height="240" aria-label="Distribusi pembayaran per sumber"></canvas></div>
-          <p class="muted small" style="text-align: center;">Transaksi dibayar per sumber (platform)</p>
+          <p class="muted small" style="text-align: center;">Transaksi dibayar per sumber (platform), 7 hari terakhir</p>
         </div>
         <div class="card">
           <div class="section-head"><h3>Penghasilan 7 Hari</h3></div>
@@ -57,7 +70,7 @@
 
       <div class="card">
         <div class="section-head">
-          <h3>Merchant Terbaik</h3>
+          <h3>Merchant Terbaik <span class="muted small">(7 hari terakhir)</span></h3>
           <a class="btn-ghost btn-sm" href="/admin?panel=merchants">Lihat semua merchant</a>
         </div>
         <div class="table-wrap">
@@ -67,7 +80,7 @@
             </thead>
             <tbody>
               <% if (stats.topMerchants.length === 0) { %>
-                <tr><td colspan="4" class="empty">Belum ada transaksi dibayar.</td></tr>
+                <tr><td colspan="4" class="empty">Belum ada transaksi dibayar dalam 7 hari terakhir.</td></tr>
               <% } %>
               <% stats.topMerchants.forEach(function (r) { %>
                 <tr>
@@ -85,25 +98,33 @@
 
     <!-- ================= Penghasilan ================= -->
     <section class="card tab-panel" data-panel="income" <%= activePanel === 'income' ? '' : 'hidden' %>>
-      <div class="section-head"><h2>Penghasilan</h2></div>
-      <p class="muted small">Fee gateway berasal dari kode unik transaksi yang memakai QRIS pool admin. Kode unik tidak masuk saldo merchant.</p>
+      <div class="section-head"><h2>Penghasilan (7 Hari Terakhir)</h2></div>
+      <p class="muted small">Fee gateway berasal dari kode unik transaksi yang memakai QRIS pool admin. Kode unik tidak masuk saldo merchant. Periode: <%= stats.rangeLabel %>.</p>
 
       <div class="stat-grid">
         <div class="stat">
           <span class="stat-label">Total Fee (kode unik)</span>
           <span class="stat-value">Rp <%= income.total_fee.toLocaleString('id-ID') %></span>
+          <span class="muted small">7 hari terakhir</span>
         </div>
         <div class="stat">
           <span class="stat-label">Total Saldo Merchant</span>
           <span class="stat-value">Rp <%= income.total_merchant_credit.toLocaleString('id-ID') %></span>
+          <span class="muted small">7 hari terakhir</span>
         </div>
         <div class="stat">
           <span class="stat-label">Transaksi Dibayar</span>
-          <span class="stat-value"><%= income.paid_count %></span>
+          <span class="stat-value"><%= income.paid_count.toLocaleString('id-ID') %></span>
+          <span class="muted small">7 hari terakhir</span>
+        </div>
+        <div class="stat stat-accent">
+          <span class="stat-label">Transaksi Hari Ini</span>
+          <span class="stat-value"><%= income.today.paid_today.toLocaleString('id-ID') %></span>
+          <span class="muted small">Fee <span class="mono">Rp <%= income.today.fee_today.toLocaleString('id-ID') %></span></span>
         </div>
       </div>
 
-      <h3>Rincian per Merchant</h3>
+      <h3>Rincian per Merchant <span class="muted small">(7 hari terakhir)</span></h3>
       <div class="table-wrap">
         <table>
           <thead>
@@ -111,7 +132,7 @@
           </thead>
           <tbody>
             <% if (income.per_merchant.length === 0) { %>
-              <tr><td colspan="4" class="empty">Belum ada transaksi dibayar.</td></tr>
+              <tr><td colspan="4" class="empty">Belum ada transaksi dibayar dalam 7 hari terakhir.</td></tr>
             <% } %>
             <% income.per_merchant.forEach(function (r) { %>
               <tr>
@@ -364,14 +385,15 @@
             <% }) %>
           </tbody>
         </table>
-        <% if (txns.total_pages > 1) { %>
-          <div class="pagination">
-            <% var page = txns.page; var pages = txns.total_pages; %>
-            <% for (var p = 1; p <= pages; p++) { %>
-              <a class="page-link <%= p === page ? 'current' : '' %>" href="/admin?panel=transactions&page=<%= p %><%= filters.merchantId ? '&merchant_id=' + encodeURIComponent(filters.merchantId) : '' %><%= filters.status ? '&status=' + encodeURIComponent(filters.status) : '' %>"><%= p %></a>
-            <% } %>
-          </div>
-        <% } %>
+        <%- include('partials/pagination', {
+              page: txns.page,
+              pages: txns.total_pages,
+              baseUrl: '/admin',
+              panel: 'transactions',
+              pageParam: 'page',
+              label: 'transaksi',
+              params: { merchant_id: filters.merchantId, status: filters.status }
+            }) %>
       </div>
     </section>
 
@@ -401,6 +423,94 @@
             <% }) %>
           </tbody>
         </table>
+        <%- include('partials/pagination', {
+              page: orphans.page,
+              pages: orphans.total_pages,
+              baseUrl: '/admin',
+              panel: 'orphans',
+              pageParam: 'orphan_page',
+              label: 'pembayaran tak teridentifikasi'
+            }) %>
+      </div>
+    </section>
+
+    <!-- ================= Withdraw ================= -->
+    <section class="card tab-panel" data-panel="withdrawals" <%= activePanel === 'withdrawals' ? '' : 'hidden' %>>
+      <div class="section-head">
+        <h2>Withdraw Merchant</h2>
+        <form class="filters" method="get" action="/admin">
+          <input type="hidden" name="panel" value="withdrawals" />
+          <select name="wd_status">
+            <option value="">Semua status</option>
+            <% ['pending', 'paid', 'rejected'].forEach(function (s) { %>
+              <option value="<%= s %>" <%= filters.wdStatus === s ? 'selected' : '' %>><%= s %></option>
+            <% }) %>
+          </select>
+          <button type="submit" class="btn btn-sm">Terapkan</button>
+          <a class="btn-ghost btn-sm" href="/admin?panel=withdrawals">Reset</a>
+        </form>
+      </div>
+      <p class="muted small">Withdraw diproses manual: transfer dana ke rekening merchant dilakukan di luar sistem, lalu tandai sudah dibayar di sini.</p>
+
+      <div class="stat-grid">
+        <div class="stat stat-accent">
+          <span class="stat-label">Menunggu Diproses</span>
+          <span class="stat-value"><%= withdrawalSummary.pending_count %> <span class="muted small">pengajuan</span></span>
+          <span class="muted small">Total <span class="mono">Rp <%= withdrawalSummary.pending_amount.toLocaleString('id-ID') %></span></span>
+        </div>
+        <div class="stat">
+          <span class="stat-label">Sudah Dibayar</span>
+          <span class="stat-value"><%= withdrawalSummary.paid_count %> <span class="muted small">pengajuan</span></span>
+          <span class="muted small">Total <span class="mono">Rp <%= withdrawalSummary.paid_amount.toLocaleString('id-ID') %></span></span>
+        </div>
+        <div class="stat">
+          <span class="stat-label">Ditolak</span>
+          <span class="stat-value"><%= withdrawalSummary.rejected_count %> <span class="muted small">pengajuan</span></span>
+          <span class="muted small">Dana dikembalikan ke saldo merchant</span>
+        </div>
+      </div>
+
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr><th>ID</th><th>Merchant</th><th>Nominal</th><th>Rekening</th><th>Status</th><th>Diajukan</th><th>Aksi</th></tr>
+          </thead>
+          <tbody>
+            <% if (withdrawals.data.length === 0) { %>
+              <tr><td colspan="7" class="empty">Tidak ada pengajuan withdraw<%= filters.wdStatus ? ' dengan status ini' : '' %>.</td></tr>
+            <% } %>
+            <% withdrawals.data.forEach(function (w) { %>
+              <tr>
+                <td class="small mono"><%= w.id %></td>
+                <td><strong><%= w.merchant_name || w.merchant_id %></strong><br /><span class="muted small"><%= w.merchant_id %></span></td>
+                <td class="mono">Rp <%= w.amount.toLocaleString('id-ID') %></td>
+                <td class="small">
+                  <strong><%= w.bank_name %></strong> <%= w.account_number %><br />
+                  <span class="muted small"><%= w.account_name %></span>
+                </td>
+                <td><span class="badge <%= w.status %>"><%= w.status %></span></td>
+                <td class="small"><%= new Date(w.requested_at).toLocaleString('id-ID') %></td>
+                <td class="actions">
+                  <% if (w.status === 'pending') { %>
+                    <button class="btn btn-sm" type="button" data-action="withdraw-paid" data-id="<%= w.id %>">Tandai Dibayar</button>
+                    <button class="btn-danger btn-sm" type="button" data-action="withdraw-reject" data-id="<%= w.id %>">Tolak</button>
+                  <% } else { %>
+                    <span class="muted small"><%= w.admin_note || 'Selesai' %></span>
+                  <% } %>
+                </td>
+              </tr>
+            <% }) %>
+          </tbody>
+        </table>
+        <%- include('partials/pagination', {
+              page: withdrawals.page,
+              pages: withdrawals.total_pages,
+              baseUrl: '/admin',
+              panel: 'withdrawals',
+              pageParam: 'wd_page',
+              label: 'withdraw',
+              params: { wd_status: filters.wdStatus }
+            }) %>
       </div>
     </section>
   </div>

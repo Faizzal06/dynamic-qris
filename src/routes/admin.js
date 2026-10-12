@@ -12,7 +12,7 @@ function toTxnResponse(t) {
   return { ...t, metadata: safeParseJson(t.metadata) };
 }
 
-function createAdminRouter({ db, config, merchantService, userService, transactionService, qrisAccountService, payhookAppService }) {
+function createAdminRouter({ db, config, merchantService, userService, transactionService, qrisAccountService, payhookAppService, withdrawalService }) {
   const router = express.Router();
   router.use(requireSession(db, 'admin'));
 
@@ -291,6 +291,42 @@ function createAdminRouter({ db, config, merchantService, userService, transacti
       limit: req.query.limit,
     });
     res.json(result);
+  });
+
+  // ===== Withdraw (diproses manual oleh admin) =====
+
+  router.get('/withdrawals', (req, res, next) => {
+    try {
+      const result = withdrawalService.listWithdrawals({
+        merchantId: req.query.merchant_id || undefined,
+        status: req.query.status || undefined,
+        page: req.query.page,
+        limit: req.query.limit,
+      });
+      res.json({ ...result, summary: withdrawalService.getSummary() });
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  router.post('/withdrawals/:id/paid', (req, res, next) => {
+    try {
+      const { admin_note } = req.body || {};
+      const withdrawal = withdrawalService.markPaid(req.params.id, admin_note);
+      res.json({ withdrawal });
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  router.post('/withdrawals/:id/reject', (req, res, next) => {
+    try {
+      const { admin_note } = req.body || {};
+      const withdrawal = withdrawalService.reject(req.params.id, admin_note);
+      res.json({ withdrawal });
+    } catch (err) {
+      next(err);
+    }
   });
 
   return router;

@@ -10,6 +10,7 @@ const { createMerchantService } = require('./services/merchantService');
 const { createUserService } = require('./services/userService');
 const { createQrisAccountService } = require('./services/qrisAccountService');
 const { createPayhookAppService } = require('./services/payhookAppService');
+const { createWithdrawalService } = require('./services/withdrawalService');
 const { createMerchantRouter } = require('./routes/merchant');
 const { createInternalRouter } = require('./routes/internal');
 const { createAuthRouter } = require('./routes/auth');
@@ -28,6 +29,7 @@ function createApp({ db, config }) {
   const transactionService = createTransactionService(db, config, uniqueAmount, qrisConverter, webhookSender, qrisAccountService);
   const merchantService = createMerchantService(db);
   const userService = createUserService(db);
+  const withdrawalService = createWithdrawalService(db);
   const rateLimiter = createRateLimiter({
     max: config.loginRateLimitMax,
     windowMs: config.loginRateLimitWindowMs,
@@ -64,12 +66,12 @@ function createApp({ db, config }) {
   app.use('/auth', createAuthRouter({ db, config, userService, rateLimiter }));
 
   // API admin & merchant dashboard
-  app.use('/admin/api', createAdminRouter({ db, config, merchantService, userService, transactionService, qrisAccountService, payhookAppService }));
-  app.use('/dashboard/api', createDashboardRouter({ db, config, merchantService, userService, transactionService, qrisAccountService, payhookAppService, webhookSender }));
+  app.use('/admin/api', createAdminRouter({ db, config, merchantService, userService, transactionService, qrisAccountService, payhookAppService, withdrawalService }));
+  app.use('/dashboard/api', createDashboardRouter({ db, config, merchantService, userService, transactionService, qrisAccountService, payhookAppService, webhookSender, withdrawalService }));
 
   // Halaman EJS (login, dashboard admin & merchant) — dirender server-side
   app.use(
-    createPageRouter({ db, config, merchantService, qrisAccountService, payhookAppService, transactionService })
+    createPageRouter({ db, config, merchantService, qrisAccountService, payhookAppService, transactionService, withdrawalService })
   );
 
   // Asset statis dashboard (style.css, dashboard.js, login.js)
@@ -86,6 +88,7 @@ function createApp({ db, config }) {
     userService,
     qrisAccountService,
     payhookAppService,
+    withdrawalService,
   };
 }
 

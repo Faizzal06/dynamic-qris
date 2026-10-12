@@ -14,6 +14,7 @@
       <div class="nav-group">
         <p class="nav-group-label">Keuangan</p>
         <a class="nav-item <%= activePanel === 'transactions' ? 'active' : '' %>" href="/admin?panel=transactions" data-tab="transactions"><i class="fa-solid fa-receipt"></i> Transaksi</a>
+        <a class="nav-item <%= activePanel === 'withdrawals' ? 'active' : '' %>" href="/admin?panel=withdrawals" data-tab="withdrawals"><i class="fa-solid fa-money-bill-transfer"></i> Withdraw</a>
         <a class="nav-item <%= activePanel === 'orphans' ? 'active' : '' %>" href="/admin?panel=orphans" data-tab="orphans"><i class="fa-solid fa-triangle-exclamation"></i> Tak Teridentifikasi</a>
       </div>
       <div class="nav-group">
@@ -31,6 +32,7 @@
       <div class="nav-group">
         <p class="nav-group-label">Keuangan</p>
         <a class="nav-item <%= activePanel === 'transactions' ? 'active' : '' %>" href="/dashboard?panel=transactions" data-tab="transactions"><i class="fa-solid fa-receipt"></i> Transaksi</a>
+        <a class="nav-item <%= activePanel === 'withdrawals' ? 'active' : '' %>" href="/dashboard?panel=withdrawals" data-tab="withdrawals"><i class="fa-solid fa-money-bill-transfer"></i> Withdraw</a>
         <a class="nav-item <%= activePanel === 'orphans' ? 'active' : '' %>" href="/dashboard?panel=orphans" data-tab="orphans"><i class="fa-solid fa-triangle-exclamation"></i> Tak Teridentifikasi</a>
       </div>
       <div class="nav-group">

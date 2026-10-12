@@ -10,6 +10,13 @@
 
     <!-- ================= Dashboard overview ================= -->
     <section class="tab-panel" data-panel="dashboard">
+      <div class="section-head">
+        <div>
+          <h2 style="margin: 0;">Ringkasan 7 Hari Terakhir</h2>
+          <p class="muted small" style="margin: var(--space-xs) 0 0;"><%= stats.rangeLabel %></p>
+        </div>
+      </div>
+
       <div class="stat-grid">
         <div class="stat">
           <span class="stat-label">Total Saldo</span>
@@ -17,13 +24,19 @@
           <% if (stats.saldoTrend !== null) { %>
             <span class="trend <%= stats.saldoTrend >= 0 ? 'up' : 'down' %>">
               <i class="fa-solid <%= stats.saldoTrend >= 0 ? 'fa-arrow-trend-up' : 'fa-arrow-trend-down' %>"></i>
-              <%= Math.abs(stats.saldoTrend) %>% <span class="muted small">vs 7 hari lalu</span>
+              <%= Math.abs(stats.saldoTrend) %>% <span class="muted small">vs 7 hari sebelumnya</span>
             </span>
           <% } %>
         </div>
         <div class="stat">
           <span class="stat-label">Transaksi Dibayar</span>
-          <span class="stat-value"><%= saldo.paid_count.toLocaleString('id-ID') %></span>
+          <span class="stat-value"><%= stats.paidCount.toLocaleString('id-ID') %></span>
+          <span class="muted small">7 hari terakhir</span>
+        </div>
+        <div class="stat stat-accent">
+          <span class="stat-label">Transaksi Hari Ini</span>
+          <span class="stat-value"><%= stats.today.paid_today.toLocaleString('id-ID') %></span>
+          <span class="muted small">Saldo masuk <span class="mono">Rp <%= stats.today.credit_today.toLocaleString('id-ID') %></span></span>
         </div>
         <div class="stat">
           <span class="stat-label">QRIS Aktif</span>
@@ -299,14 +312,15 @@
             <% }) %>
           </tbody>
         </table>
-        <% if (txns.total_pages > 1) { %>
-          <div class="pagination">
-            <% var page = txns.page; var pages = txns.total_pages; %>
-            <% for (var p = 1; p <= pages; p++) { %>
-              <a class="page-link <%= p === page ? 'current' : '' %>" href="/dashboard?panel=transactions&page=<%= p %><%= filters.status ? '&status=' + encodeURIComponent(filters.status) : '' %>"><%= p %></a>
-            <% } %>
-          </div>
-        <% } %>
+        <%- include('partials/pagination', {
+              page: txns.page,
+              pages: txns.total_pages,
+              baseUrl: '/dashboard',
+              panel: 'transactions',
+              pageParam: 'page',
+              label: 'transaksi',
+              params: { status: filters.status }
+            }) %>
       </div>
     </section>
 
@@ -334,6 +348,106 @@
             <% }) %>
           </tbody>
         </table>
+        <%- include('partials/pagination', {
+              page: orphans.page,
+              pages: orphans.total_pages,
+              baseUrl: '/dashboard',
+              panel: 'orphans',
+              pageParam: 'orphan_page',
+              label: 'pembayaran tak teridentifikasi'
+            }) %>
+      </div>
+    </section>
+
+    <!-- ================= Withdraw ================= -->
+    <section class="card tab-panel" data-panel="withdrawals" hidden>
+      <div class="section-head"><h2>Withdraw</h2></div>
+      <p class="muted small">Ajukan pencairan saldo ke rekening Anda. Pengajuan diproses <strong>manual oleh admin</strong> di luar sistem — dana dikirim setelah Anda menandai pengajuan selesai dibayar admin.</p>
+
+      <div class="stat-grid">
+        <div class="stat stat-accent">
+          <span class="stat-label">Saldo Tersedia</span>
+          <span class="stat-value">Rp <%= withdrawalBalance.available.toLocaleString('id-ID') %></span>
+          <span class="muted small">siap ditarik</span>
+        </div>
+        <div class="stat">
+          <span class="stat-label">Total Saldo</span>
+          <span class="stat-value">Rp <%= withdrawalBalance.total_credit.toLocaleString('id-ID') %></span>
+          <span class="muted small">dari transaksi lunas</span>
+        </div>
+        <div class="stat">
+          <span class="stat-label">Sedang Diproses</span>
+          <span class="stat-value">Rp <%= withdrawalBalance.locked.toLocaleString('id-ID') %></span>
+          <span class="muted small">pending + sudah dibayar</span>
+        </div>
+      </div>
+
+      <div class="section-head">
+        <h3>Ajukan Withdraw</h3>
+        <button id="btn-new-withdrawal" class="btn btn-primary btn-sm" type="button">+ Ajukan Pencairan</button>
+      </div>
+      <div id="withdraw-create-wrap" class="hidden form-wrap">
+        <form id="withdraw-request-form" class="form-grid">
+          <div>
+            <label for="w-amount">Nominal (Rp)</label>
+            <input id="w-amount" name="amount" type="number" min="<%= minWithdraw %>" step="1" placeholder="Minimal <%= minWithdraw.toLocaleString('id-ID') %>" required />
+          </div>
+          <div>
+            <label for="w-bank">Nama bank</label>
+            <input id="w-bank" name="bank_name" required />
+          </div>
+          <div>
+            <label for="w-account-number">Nomor rekening</label>
+            <input id="w-account-number" name="account_number" required />
+          </div>
+          <div>
+            <label for="w-account-name">Nama pemilik rekening</label>
+            <input id="w-account-name" name="account_name" required />
+          </div>
+          <div>
+            <label for="w-note">Catatan (opsional)</label>
+            <input id="w-note" name="note" />
+          </div>
+          <div class="form-actions">
+            <button type="submit" class="btn btn-primary">Ajukan</button>
+            <button type="button" class="btn-ghost" data-hide="withdraw-create-wrap">Batal</button>
+          </div>
+        </form>
+      </div>
+
+      <h3>Riwayat Pengajuan</h3>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr><th>ID</th><th>Nominal</th><th>Rekening</th><th>Status</th><th>Diajukan</th><th>Catatan Admin</th></tr>
+          </thead>
+          <tbody>
+            <% if (withdrawals.data.length === 0) { %>
+              <tr><td colspan="6" class="empty">Belum ada pengajuan withdraw.</td></tr>
+            <% } %>
+            <% withdrawals.data.forEach(function (w) { %>
+              <tr>
+                <td class="small mono"><%= w.id %></td>
+                <td class="mono">Rp <%= w.amount.toLocaleString('id-ID') %></td>
+                <td class="small">
+                  <strong><%= w.bank_name %></strong> <%= w.account_number %><br />
+                  <span class="muted small"><%= w.account_name %></span>
+                </td>
+                <td><span class="badge <%= w.status %>"><%= w.status %></span></td>
+                <td class="small"><%= new Date(w.requested_at).toLocaleString('id-ID') %></td>
+                <td class="small muted"><%= w.admin_note || w.note || '' %></td>
+              </tr>
+            <% }) %>
+          </tbody>
+        </table>
+        <%- include('partials/pagination', {
+              page: withdrawals.page,
+              pages: withdrawals.total_pages,
+              baseUrl: '/dashboard',
+              panel: 'withdrawals',
+              pageParam: 'wd_page',
+              label: 'withdraw'
+            }) %>
       </div>
     </section>
   </div>

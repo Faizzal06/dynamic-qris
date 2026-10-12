@@ -122,6 +122,25 @@ CREATE TABLE IF NOT EXISTS orphan_payments (
   received_at     TEXT NOT NULL,
   note            TEXT
 );
+
+-- Withdraw: diajukan merchant, diproses manual oleh admin (transfer di luar sistem).
+-- status: pending (menunggu admin) | paid (sudah ditransfer) | rejected (ditolak admin).
+-- withdrawn + pending mengunci saldo merchant agar tidak bisa over-withdraw.
+CREATE TABLE IF NOT EXISTS withdrawals (
+  id             TEXT PRIMARY KEY,
+  merchant_id    TEXT NOT NULL,
+  amount         INTEGER NOT NULL,
+  bank_name      TEXT NOT NULL,
+  account_number TEXT NOT NULL,
+  account_name   TEXT NOT NULL,
+  note           TEXT,
+  status         TEXT NOT NULL DEFAULT 'pending',
+  admin_note     TEXT,
+  requested_at   TEXT NOT NULL,
+  decided_at     TEXT,
+  created_at     TEXT NOT NULL,
+  updated_at     TEXT NOT NULL
+);
 `;
 
 /**
@@ -155,6 +174,8 @@ function createIndexes(db) {
     CREATE INDEX IF NOT EXISTS idx_txn_merchant_status_amount ON transactions (merchant_id, status, actual_amount);
     CREATE INDEX IF NOT EXISTS idx_txn_merchant_status_credit ON transactions (merchant_id, status, merchant_credit);
     CREATE INDEX IF NOT EXISTS idx_orphan_merchant ON orphan_payments (merchant_id);
+    CREATE INDEX IF NOT EXISTS idx_wd_merchant ON withdrawals (merchant_id);
+    CREATE INDEX IF NOT EXISTS idx_wd_status ON withdrawals (status);
   `);
 }
 

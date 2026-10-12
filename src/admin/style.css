@@ -681,8 +681,17 @@ tbody tr:last-child td { border-bottom: none; }
 
 .pagination {
   display: flex;
-  gap: var(--space-xs);
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: var(--space-sm) var(--space-md);
   margin-top: var(--space-md);
+}
+
+.page-links {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
   flex-wrap: wrap;
 }
 
@@ -701,6 +710,57 @@ tbody tr:last-child td { border-bottom: none; }
 }
 .page-link:hover { color: var(--primary); border-color: var(--primary); text-decoration: none; }
 .page-link.current { color: #fff; background: linear-gradient(135deg, var(--primary), var(--primary-hover)); border-color: var(--primary); font-weight: 600; }
+
+.page-link.disabled {
+  color: var(--placeholder);
+  border-color: var(--border);
+  background: var(--surface-subtle);
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.page-ellipsis {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 20px;
+  height: 32px;
+  color: var(--fg-muted);
+  user-select: none;
+}
+
+.page-jump {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  flex-wrap: wrap;
+}
+.page-jump label {
+  margin: 0;
+  font-size: var(--micro);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--fg-muted);
+  white-space: nowrap;
+}
+.page-jump input[type='number'] {
+  width: 76px;
+  padding: 6px 10px;
+  text-align: center;
+  -moz-appearance: textfield;
+}
+.page-jump input[type='number']::-webkit-outer-spin-button,
+.page-jump input[type='number']::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+/* Kartu aksen untuk info hari ini */
+.stat-accent {
+  border-color: color-mix(in srgb, var(--secondary) 35%, var(--border));
+  background: linear-gradient(135deg, color-mix(in srgb, var(--secondary) 8%, var(--surface-subtle)), var(--surface-subtle));
+}
 
 /* ============ Login ============ */
 
